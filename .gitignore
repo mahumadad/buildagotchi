@@ -1,0 +1,36 @@
+# Reference repos cloned for study — not part of this project
+/stack-chan/
+/StackChan/
+/StackChan-BSP/
+/claude-desktop-buddy/
+/claude-desktop-buddy-esp32/
+/claude-desktop-buddy-s3/
+
+# Secrets and local config (D25 — never commit)
+.env
+.env.*
+!.env.example
+config.yaml
+config.*.yaml
+!config.example.yaml
+
+# Event Recorder dumps (D15)
+/events/
+*.ndjson
+
+# Build artifacts
+/build/
+/dist/
+/node_modules/
+*.log
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ModdableSDK build cache if run inside repo (unlikely, but just in case)
+/xs/
+/tmp/
