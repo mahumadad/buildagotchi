@@ -221,15 +221,15 @@ anotar en NOTES.md durante Fase 0). Envelope común:
 { "v": 1, "seq": 42, "t": "state", "ts": 1751700000000, "p": { /* payload */ } }
 ```
 
-| `t` | Dirección | Payload | Notas |
-|---|---|---|---|
-| `hello` | ambos | `{role, fw_version?, bridge_version?, ts}` | handshake; establece el mapeo de relojes (ver abajo) |
-| `state` | bridge→fw | `ResolvedState` | requiere `ack` |
-| `ack` | fw→bridge | `{ack_seq}` | retry 1 vez a los 500 ms; segundo miss → contador + reconexión |
-| `state_applied` | fw→bridge | `{ack_seq, bridge_ts, fw_applied_ts}` | tras el frame renderizado → latencia e2e (D23) |
-| `hb` | ambos | `{}` | cada 5s; 3 misses (15s) = link muerto — calza con el safe mode del firmware (D16) |
-| `state_sync` | bridge→fw | `ResolvedState` completo | siempre al (re)conectar, nunca incremental (D7) |
-| `event` | fw→bridge | `{kind: 'button'|'touch', detail}` | botones y touch entran al bus como eventos `source: 'stackchan'` |
+| `t` | Dirección | Payload | Ejemplo (envelope + `p` abreviado) | Notas |
+|---|---|---|---|---|
+| `hello` | ambos | `{role, fw_version?, bridge_version?, ts}` | `{"v":1,"seq":1,"t":"hello","ts":1751700000000,"p":{"role":"bridge","bridge_version":"0.1.0","ts":1751700000000}}` | handshake; establece el mapeo de relojes (ver abajo) |
+| `state` | bridge→fw | `ResolvedState` | `{"v":1,"seq":42,"t":"state","ts":...,"p":{"emotion":"DOUBTFUL","decorators":[],"leds":[{"row":"left","color":"amber","pattern":"solid"}],"servo":{"pitch":10}}}` | requiere `ack` |
+| `ack` | fw→bridge | `{ack_seq}` | `{"v":1,"seq":8,"t":"ack","ts":...,"p":{"ack_seq":42}}` | retry 1 vez a los 500 ms; segundo miss → contador + reconexión |
+| `state_applied` | fw→bridge | `{ack_seq, bridge_ts, fw_applied_ts}` | `{"v":1,"seq":9,"t":"state_applied","ts":...,"p":{"ack_seq":42,"bridge_ts":1751700000000,"fw_applied_ts":52341}}` | tras el frame renderizado → latencia e2e (D23) |
+| `hb` | ambos | `{}` | `{"v":1,"seq":100,"t":"hb","ts":...,"p":{}}` | cada 5s; 3 misses (15s) = link muerto — calza con el safe mode del firmware (D16) |
+| `state_sync` | bridge→fw | `ResolvedState` completo | igual que `state`, pero se emite siempre al (re)conectar aunque no haya cambio | siempre al (re)conectar, nunca incremental (D7) |
+| `event` | fw→bridge | `{kind: 'button'\|'touch', detail}` | `{"v":1,"seq":11,"t":"event","ts":...,"p":{"kind":"button","detail":{"button":"A","action":"press"}}}` | botones y touch entran al bus como eventos `source: 'stackchan'` |
 
 - **Mapeo de relojes (para la latencia e2e de D23)**: no se asume que el
   firmware tenga hora de pared — su `ts` es el reloj monotónico del ESP32
