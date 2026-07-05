@@ -43,6 +43,10 @@ and a local dashboard.
 - **Open event surface** — a `POST /events` HTTP endpoint and MCP tools
   (`notify`, `set_face`, `speak`, …) so external scripts, webhooks, and agents
   can drive the device without writing an adapter.
+- **Local dashboard** — a web UI at `localhost:1780` showing current state,
+  event history, adapter health, BLE link status, `/metrics` for scraping,
+  and replay controls to re-run a past event log against the current state
+  machine.
 
 ## Repository contents
 

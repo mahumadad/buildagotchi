@@ -176,6 +176,11 @@ Cola priorizada: orden por (severidad desc, timestamp asc).
 - **TTL**: tabla por severidad (config, ver §10) + **`ttlOverrides`** por
   source+category — así se expresa "permission de Claude: TTL infinito" sin
   hacks. `Event.ttlMs` puntual gana sobre todo.
+  **Semántica de `infinite`**: `parseDuration('infinite')` produce `null`
+  internamente. El AM trata `ttl === null` como "sin expiración por tiempo —
+  solo se resuelve por acción explícita (approve/deny, dismiss por touch) o
+  por ser reemplazado por evento de mayor severidad". No confundir con `0`
+  (que sería "expira inmediatamente").
 - **Replacement** (config): `higher_severity_interrupts` (default) — mayor
   severidad interrumpe al activo (que vuelve a la cola si le queda TTL);
   misma o menor severidad encola.
@@ -234,6 +239,13 @@ anotar en NOTES.md durante Fase 0). Envelope común:
   `state_latency_ms`. El offset se refresca con un `hello` renovado cada 10 min
   (deriva de relojes) y siempre al reconectar. Vive en `protocol.ts`
   (`estimateClockOffset()`).
+- **Fallo del `hello`**: si el firmware no responde a `hello` en los primeros
+  **2s** tras conectar, se asume `clockOffset = 0`, se loguea warning con
+  `handshake_failures_total`++ y la conexión se mantiene operativa. El
+  dashboard marca `state_latency_ms` como inexacto hasta el próximo `hello`
+  exitoso; el bridge reintenta `hello` cada 30s. Nunca se rechaza la
+  conexión por falla de handshake: mejor un buddy que reacciona sin
+  instrumentar latencia que uno silencioso.
 - **Reconexión**: automática con backoff 1s → 2s → 4s → cap 10s. Budget e2e de
   reconexión + state_sync: < 3s (D23) — se mide, no se asume.
 - **`Transport`** (interfaz): `connect() / disconnect() / send(line) /
@@ -312,6 +324,11 @@ base64url), lo guarda en Keychain vía keytar y lo **imprime una sola vez** con
 el ejemplo de `curl` listo para copiar. Si ya existe, `bridge init` no lo pisa
 (`--rotate` para regenerar). El bridge nunca lo loguea ni lo expone por HTTP.
 
+**MCP server**: **no en Fase 1**. En esta fase solo existe `POST /events` como
+superficie externa. El MCP server del bridge (tools `notify()`, `set_face()`,
+etc.) se añade en Fase 2 — ver ROADMAP. La asimetría de auth entre HTTP (token
+requerido) y MCP (`notify()` open en localhost) se resuelve entonces (S1.4).
+
 **S1.4 — auth de `POST /events`**: Fase 1 sigue D26 literal (token requerido).
 Nota abierta: D26 tiene una asimetría (HTTP con token pero MCP `notify()` open
 en localhost) — se resuelve en Fase 2 cuando exista el MCP server, acá no se
@@ -344,9 +361,12 @@ reconnect_duration_ms                         histogram
 config_reload_duration_ms                     histogram
 am_queue_size                                 gauge
 face_changes_total                            counter   # fuente de verdad
+# Los siguientes 3 son rates computados con ventana móvil 60s por el bridge para
+# consumo directo del dashboard. Con un Prometheus real, usar rate(*_total[1m]).
 face_changes_per_minute                       gauge     # R8: warn > 4 sostenido
 time_in_critical_state_ratio                  gauge     # R8: warn > 0.3/hora
 unique_sources_per_minute                     gauge     # R8: warn > 3
+handshake_failures_total                      counter   # §9 fallo del hello
 ```
 
 Los tres de R8 disparan alerta amarilla en el dashboard al superar umbral.

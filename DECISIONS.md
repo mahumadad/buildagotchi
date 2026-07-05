@@ -327,6 +327,15 @@ Métrica automatizable de "¿le creo a la cara?":
 - **Definición**: contar cuántas veces por día el usuario abre/enfoca Claude Code
   (via Accessibility API en macOS) **mientras el buddy está en estado
   NEUTRAL/HAPPY** (nada pendiente según el buddy).
+- **Permiso macOS requerido**: `kTCCServiceAccessibility` (System Settings →
+  Privacy & Security → Accessibility, agregar el bridge). Como es un
+  LaunchAgent (D2/S1.5), el consent dialog aparece en la sesión del usuario
+  la primera vez que el adapter intenta leer el foco.
+- **Si el usuario no lo concede**: la métrica se deshabilita con warning
+  visible en el dashboard ("Trust check disabled — Accessibility permission
+  not granted"). NO es blocking — el resto del sistema opera igual, solo se
+  pierde esta señal para el Gate 1. Fallback subjetivo: se marca en NOTES.md
+  al hacer la validación.
 - **Filtro anti-falsos-positivos**: solo cuenta si Claude no tenía foco en los 30s
   previos. Re-activaciones rápidas (alt-tab, notif, etc.) no cuentan.
 - **Fase burn-in**: los primeros 3 días de uso no cuentan para el Gate 1 (curva de
