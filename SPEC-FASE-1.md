@@ -55,8 +55,18 @@ que cambiar una interfaz de 1A, es un bug de esta spec y se anota en NOTES.md.
 | HTTP server | Fastify | maduro, schema-friendly, liviano |
 | Dashboard front | HTML estático + vanilla JS + SSE | proyecto personal, cero build de front |
 | Logging | pino (JSON) — separado del Event Recorder | el log de app no es el recorder |
-| BLE (solo 1B) | `@abandonware/noble` detrás de `Transport` | validar en 1B; si falla en macOS moderno, alternativa se evalúa sin tocar el resto |
+| BLE (solo 1B) | `@abandonware/noble` detrás de `Transport` | **riesgo alto, smoke test en M0** (ver Q4) — si falla en macOS moderno, alternativa se evalúa sin tocar el resto |
 | Lint/format | Biome | una herramienta, cero config wars |
+
+**Ejecución (S1.5)**:
+
+- **Dev**: `tsx watch src/index.ts` (arranque instantáneo, sin build).
+- **Prod**: `tsc` → `dist/`; launchd ejecuta `node dist/index.js` — el daemon no
+  depende de tsx ni de ningún tooling de TS en runtime.
+- **launchd**: el bridge corre como **LaunchAgent** (sesión de usuario), NO como
+  LaunchDaemon. Dos razones: (a) los permisos TCC de Bluetooth necesitan poder
+  mostrar el consent dialog, imposible para un daemon de sistema; (b) keytar/
+  Keychain necesita el keychain del usuario logueado. `RunAtLoad` + `KeepAlive`.
 
 ## 4. Estructura de directorios
 
@@ -208,7 +218,7 @@ anotar en NOTES.md durante Fase 0). Envelope común:
 
 | `t` | Dirección | Payload | Notas |
 |---|---|---|---|
-| `hello` | ambos | `{role, fw_version?, bridge_version?, ts}` | handshake; estima clock skew con los `ts` cruzados |
+| `hello` | ambos | `{role, fw_version?, bridge_version?, ts}` | handshake; establece el mapeo de relojes (ver abajo) |
 | `state` | bridge→fw | `ResolvedState` | requiere `ack` |
 | `ack` | fw→bridge | `{ack_seq}` | retry 1 vez a los 500 ms; segundo miss → contador + reconexión |
 | `state_applied` | fw→bridge | `{ack_seq, bridge_ts, fw_applied_ts}` | tras el frame renderizado → latencia e2e (D23) |
@@ -216,6 +226,14 @@ anotar en NOTES.md durante Fase 0). Envelope común:
 | `state_sync` | bridge→fw | `ResolvedState` completo | siempre al (re)conectar, nunca incremental (D7) |
 | `event` | fw→bridge | `{kind: 'button'|'touch', detail}` | botones y touch entran al bus como eventos `source: 'stackchan'` |
 
+- **Mapeo de relojes (para la latencia e2e de D23)**: no se asume que el
+  firmware tenga hora de pared — su `ts` es el reloj monotónico del ESP32
+  (millis desde boot). En el `hello`, el bridge calcula
+  `offset = fw_ts - bridge_ts - (rtt / 2)` y lo guarda para la conexión;
+  cada `state_applied` se corrige con ese offset antes de alimentar
+  `state_latency_ms`. El offset se refresca con un `hello` renovado cada 10 min
+  (deriva de relojes) y siempre al reconectar. Vive en `protocol.ts`
+  (`estimateClockOffset()`).
 - **Reconexión**: automática con backoff 1s → 2s → 4s → cap 10s. Budget e2e de
   reconexión + state_sync: < 3s (D23) — se mide, no se asume.
 - **`Transport`** (interfaz): `connect() / disconnect() / send(line) /
@@ -267,9 +285,17 @@ stateRules:                   # Event → ResolvedState (D3); primera que matche
 criticalCommands: [rm, sudo, "drop", "force push", "git reset --hard", delete]  # D6 (se usa en Fase 2)
 ```
 
+**Duraciones (S1.6)**: los valores tipo `30s`, `2m`, `100ms` del YAML se parsean
+con un helper `parseDuration()` (string → ms) integrado al schema como
+refinement de zod, más el literal `infinite`. Se decide y escribe en M0 — no se
+descubre en M2. Internamente todo es `number` en ms.
+
 **Hot-reload (D18)**: `fs.watch` + debounce 100ms → parse → validación zod →
 aplicar atómico. Config inválida: se conserva la vigente + warning en dashboard +
 `config_reload_failures_total`++. Se mide duración (budget < 200ms, D23).
+Nota: si `fs.watch` resulta flaky con editores que reemplazan el archivo por
+rename (Neovim, VSCode con atomic save), se cambia a `chokidar` sin discusión —
+está aislado en `config/loader.ts`.
 
 ## 11. Server local (`127.0.0.1:1780`)
 
@@ -280,6 +306,11 @@ aplicar atómico. Config inválida: se conserva la vigente + warning en dashboar
 | `GET /metrics` | Prometheus text (§13) |
 | `POST /events` | D26: valida contra schema Event, fuerza `source` a `external:<nombre>`, auth Bearer (token en Keychain vía keytar), rate limit global |
 | `GET /health` | liveness del propio bridge |
+
+**Bootstrap del token (S1.7)**: `bridge init` genera el token (random 32 bytes,
+base64url), lo guarda en Keychain vía keytar y lo **imprime una sola vez** con
+el ejemplo de `curl` listo para copiar. Si ya existe, `bridge init` no lo pisa
+(`--rotate` para regenerar). El bridge nunca lo loguea ni lo expone por HTTP.
 
 **S1.4 — auth de `POST /events`**: Fase 1 sigue D26 literal (token requerido).
 Nota abierta: D26 tiene una asimetría (HTTP con token pero MCP `notify()` open
@@ -312,6 +343,7 @@ state_latency_ms                              histogram # e2e bridge→fw (D23),
 reconnect_duration_ms                         histogram
 config_reload_duration_ms                     histogram
 am_queue_size                                 gauge
+face_changes_total                            counter   # fuente de verdad
 face_changes_per_minute                       gauge     # R8: warn > 4 sostenido
 time_in_critical_state_ratio                  gauge     # R8: warn > 0.3/hora
 unique_sources_per_minute                     gauge     # R8: warn > 3
@@ -319,7 +351,34 @@ unique_sources_per_minute                     gauge     # R8: warn > 3
 
 Los tres de R8 disparan alerta amarilla en el dashboard al superar umbral.
 
-## 14. Testing
+Nota sobre las gauges "per_minute": son rates, que en Prometheus canónico serían
+`rate(counter[1m])` del lado del server. Como acá el consumidor típico es el
+dashboard leyendo `/metrics` directo (sin Prometheus server), el bridge expone
+**ambas**: el counter (fuente de verdad, para quien sí conecte Prometheus) y la
+gauge computada con ventana móvil de 60s (lo que consume el dashboard).
+
+## 14. Ciclo de vida del proceso (S1.8)
+
+launchd manda `SIGTERM` al parar el agente. Sin manejo explícito se pierde la
+última línea del recorder (buffer sin flush), queda una conexión BLE zombi y
+se corrompe la percepción de salud al siguiente arranque. No es opcional para
+un daemon:
+
+```
+SIGTERM/SIGINT →
+  1. dejar de aceptar eventos (bus en drain)
+  2. transport: enviar último estado NEUTRAL? NO — el firmware detecta el corte
+     por heartbeat y entra a safe mode solo (D16); no inventamos un "goodbye"
+  3. flush del Event Recorder (línea `incident: shutdown` incluida)
+  4. cerrar transport y server
+  5. exit(0) — con timeout duro de 3s: si algo cuelga, exit(1) igual
+```
+
+Se implementa en M1 junto con el Recorder (es su principal beneficiario) y se
+testea: matar el proceso con eventos en vuelo → el ndjson termina en línea
+completa y parseable, nunca truncada.
+
+## 15. Testing
 
 - **Unit**: AM (TTL, overrides, replacement, drops por modo, cola llena,
   watchdog), dedup/auto-mute, validación de config (fixtures válidas y rotas),
@@ -331,7 +390,7 @@ Los tres de R8 disparan alerta amarilla en el dashboard al superar umbral.
 - **E2E manual**: checklist de §1 — tests 1, 5, 6 al cerrar 1A; 2, 3, 4 al
   cerrar 1B (resultados anotados en NOTES.md).
 
-## 15. Plan de trabajo — milestones
+## 16. Plan de trabajo — milestones
 
 Cada milestone termina en verde (tests + algo demostrable). El detalle bite-sized
 (pasos de 2-5 min, TDD) se escribe al arrancar cada milestone, como manda el
@@ -339,8 +398,8 @@ ROADMAP.
 
 | M | Entregable | Depende de |
 |---|---|---|
-| **M0** | Scaffolding: `bridge/` con TS estricto, Vitest, Biome, `.gitignore` reforzado (config.yaml, *.ndjson, .env), CLI esqueleto `--simulate` | — |
-| **M1** | Contratos core (`events.ts` + zod) + bus + dedup + Recorder con rotación. Demo: publicar evento a mano → línea ndjson correcta | M0 |
+| **M0** | Scaffolding: `bridge/` con TS estricto, Vitest, Biome, `.gitignore` reforzado (config.yaml, *.ndjson, .env), CLI esqueleto `--simulate`, `parseDuration()` (S1.6). **Aparte, en la Mac física: smoke test de noble (Q4)** | — |
+| **M1** | Contratos core (`events.ts` + zod) + bus + dedup + Recorder con rotación + graceful shutdown (S1.8). Demo: publicar evento a mano → línea ndjson correcta; kill −TERM → ndjson sin línea truncada | M0 |
 | **M2** | Config: schema + loader + hot-reload con validación. Demo: editar yaml → cambio aplicado < 200ms | M1 |
 | **M3** | Attention Manager completo (TTL, replacement, modos, watchdog) + state machine con `stateRules`. Demo: secuencia del ejemplo de DECISIONS (reunión→exception→permission) resuelta correctamente en simulación | M2 |
 | **M4** | Server: dashboard + SSE + `/metrics` + `POST /events` (auth + rate limit) + replay CLI y botones. **Cierra tests 1, 5, 6** | M3 |
@@ -350,7 +409,7 @@ ROADMAP.
 Camino crítico sin hardware: M0 → M1 → M2 → M3 → {M4, M5}. M6 queda gateado por
 la llegada del kit y la Fase 0.
 
-## 16. Decisiones de esta spec (resumen S1.*)
+## 17. Decisiones de esta spec (resumen S1.*)
 
 - **S1.1** — Fase partida en 1A (simulación, arrancable ya) / 1B (hardware).
 - **S1.2** — Stack: npm + Vitest + Zod + Fastify + pino + Biome; dashboard sin
@@ -358,13 +417,29 @@ la llegada del kit y la Fase 0.
 - **S1.3** — Watchdog del AM = liveness del tick loop, no ausencia de emisiones.
 - **S1.4** — `POST /events` con token desde el día 1 (D26 literal); la asimetría
   con MCP `notify()` se resuelve en Fase 2.
+- **S1.5** — Ejecución: `tsx` en dev; `tsc` → `dist/` en prod; el bridge corre
+  como **LaunchAgent** de usuario (TCC de Bluetooth + Keychain), no LaunchDaemon.
+- **S1.6** — Duraciones del YAML (`30s`, `2m`, `infinite`) → `parseDuration()`
+  como refinement de zod; internamente todo en ms.
+- **S1.7** — Token de `/events` se genera con `bridge init` (imprime una vez,
+  guarda en Keychain, `--rotate` para regenerar).
+- **S1.8** — Graceful shutdown obligatorio (SIGTERM de launchd): drain → flush
+  recorder → cerrar transport/server, timeout duro 3s. Sin mensaje "goodbye" al
+  firmware — el safe mode por heartbeat (D16) ya cubre ese caso.
 
-## 17. Cuestiones abiertas (no bloquean M0-M4)
+## 18. Cuestiones abiertas (no bloquean M0-M4)
 
-- **Q1**: ¿`@abandonware/noble` funciona bien en macOS actual (permisos TCC de
-  Bluetooth para procesos launchd)? Validar al inicio de 1B; alternativas se
-  evalúan recién si falla, sin tocar nada fuera de `transport-noble.ts`.
+- **Q1**: ¿`@abandonware/noble` funciona en macOS actual (permisos TCC de
+  Bluetooth)? **Tratado como riesgo alto, no curiosidad** — ver Q4. Si falla,
+  el plan B es un helper nativo Swift/CoreBluetooth hablando con el bridge por
+  unix socket; el daño queda contenido en `transport-noble.ts`.
 - **Q2**: UUIDs y shape exactos de REFERENCE.md — se confirman en Fase 0
   (sección ya prevista en NOTES.md) y se fijan constantes en `protocol.ts`.
-- **Q3**: formato exacto de `LedCommand` (¿índice individual, fila, o ambos?) —
-  se cierra en Fase 0 al ver qué expone realmente el firmware stock.
+- **Q3**: formato exacto de `LedCommand` — se cierra en 1B al ver qué expone el
+  firmware stock. Mientras tanto 1A usa un shape provisional laxo
+  `{row: 'left'|'right', index?: number, color: string, pattern: string}` para
+  no bloquear; ajustarlo en 1B es un cambio local a `events.ts` + config.
+- **Q4**: **smoke test de noble en M0** (en la Mac física, fuera del repo si
+  hace falta): script de 20 líneas que escanea advertising BLE. 10 minutos que
+  evitan descubrir en M6 que hay que reingeniar el transport. Resultado se
+  anota en NOTES.md.
