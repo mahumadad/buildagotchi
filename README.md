@@ -57,6 +57,7 @@ and a local dashboard.
 | [SPEC-FASE-1.md](SPEC-FASE-1.md) | Implementation spec for Phase 1 (bridge foundation + BLE link), split into 1A (no hardware) / 1B (hardware). |
 | [SETUP.md](SETUP.md) | Toolchain setup for ModdableSDK + ESP-IDF on macOS. |
 | [NOTES.md](NOTES.md) | Template for recording Phase 0 discovery evidence. |
+| [config.example.yaml](config.example.yaml) | Annotated template of the bridge configuration (mode, Attention Manager, dedup, stateRules, BLE, external surface). Copy to `config.yaml` (gitignored) to use. |
 
 ## Requirements
 
@@ -65,6 +66,23 @@ and a local dashboard.
 - Node 20+
 - ModdableSDK + ESP-IDF v5.x — see [SETUP.md](SETUP.md)
 - M5Stack StackChan CoreS3 kit (K151)
+
+## Reference repos (not vendored)
+
+The `SETUP.md` and `SPEC-FASE-1.md` documents reference the following upstream
+repositories. They are **cloned locally** by the developer (and gitignored in
+this repo), not vendored or submoduled — they are studied and referenced, not
+shipped as part of buildagotchi:
+
+- <https://github.com/stack-chan/stack-chan> — Moddable firmware base for the
+  device (target `m5stackchan_cores3`).
+- <https://github.com/m5stack/StackChan> and
+  <https://github.com/m5stack/StackChan-BSP> — board support and factory firmware.
+- <https://github.com/anthropics/claude-desktop-buddy> — reference for the BLE
+  protocol (Nordic UART + JSON line-delimited) that this project extends.
+
+Clone them under the same parent directory as this repo if you want the paths
+in the docs to line up.
 
 ## Forking and contributing
 

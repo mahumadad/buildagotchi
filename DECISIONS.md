@@ -1,4 +1,4 @@
-# DECISIONS — StackChan Claude Buddy
+# DECISIONS — buildagotchi
 
 Registro de decisiones arquitectónicas del proyecto. Actualizar cuando una decisión
 cambie; no borrar las rechazadas (evita re-litigar).

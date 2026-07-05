@@ -1,0 +1,120 @@
+# config.example.yaml — buildagotchi bridge configuration template.
+#
+# Copy this to `config.yaml` (which is gitignored, D25) and adjust.
+# The bridge validates it with zod on startup and on every hot-reload (D18).
+# Durations use human-readable strings (30s / 2m / 100ms / infinite), parsed
+# by parseDuration() as a zod refinement (S1.6). Internally everything is ms.
+#
+# Reference: SPEC-FASE-1.md §10 is the source of truth for this schema.
+
+schemaVersion: 1
+
+# Default mode when the bridge starts. Cycled by button C on the device (D4/D9).
+# Filters the priority threshold at the Attention Manager:
+#   NORMAL: all severities pass
+#   FOCUS: only critical + high
+#   SLEEP: only critical
+mode: NORMAL
+
+# Local server — dashboard, /metrics, POST /events, /health.
+# Bound to localhost only (R6 — no external exposure).
+server:
+  host: 127.0.0.1
+  port: 1780
+
+# Attention Manager: arbitrates concurrent events (see architecture in DECISIONS
+# and SPEC §7). Transitions to background mood when the queue is empty.
+attentionManager:
+  # How long an event lives in the queue without explicit resolution.
+  ttlBySeverity:
+    critical: 30s
+    high: 2m
+    medium: 5m
+    low: 10m
+    ambient: 30s
+
+  # Per-source overrides. `infinite` parses to null internally — the event
+  # never times out on its own; only resolves via explicit action
+  # (approve/deny, dismiss) or being replaced by a higher-severity event.
+  ttlOverrides:
+    - { source: claude, category: permission, ttl: infinite }
+
+  maxQueueSize: 20                                # drops oldest lowest-severity when full
+  replacementPolicy: higher_severity_interrupts   # or: always_enqueue
+  transitionToBackgroundMoodDelay: 2s             # gap before falling back to Cognitive Load
+
+  # What to do with queued events when the active mode changes.
+  onModeChange:
+    toFOCUS: drop_below_high        # discard medium/low/ambient
+    toSLEEP: drop_below_critical    # discard everything except critical
+
+# Deduplication: identical events (same hash) within the window increment a
+# counter instead of re-firing. After autoMuteAfter repeats, the hash is
+# auto-muted until the window expires.
+dedup:
+  windowSeconds: 60
+  autoMuteAfter: 10
+
+# POST /events external surface (D26). Token stored in Keychain via keytar,
+# generated with `bridge init` (S1.7). Requests without a valid Bearer token
+# are rejected with 401. Rate limit applies globally to all external sources.
+external:
+  rateLimitPerMinute: 60
+  requireToken: true
+
+# Event Recorder: append-only ndjson log used for replay, daily review, and
+# historical metrics (D15). Rotates daily.
+recorder:
+  dir: ~/.buildagotchi/events
+  retentionDays: 30
+
+# BLE link (D7 protocol + safe mode D16).
+ble:
+  heartbeatSeconds: 5
+  missesBeforeDead: 3               # 15s of silence = link dead
+  reconnectBackoff:
+    initial: 1s
+    max: 10s
+
+# Event → ResolvedState mapping (D3 — no hard-wiring adapters to emotions here).
+# First rule that matches wins. Add defaults by severity as a safety net.
+stateRules:
+  - match: { source: claude, category: permission }
+    state:
+      emotion: DOUBTFUL
+      servo: { pitch: 10 }
+      leds: [{ row: left, color: amber, pattern: solid }]
+
+  - match: { severity: critical }
+    state:
+      emotion: ANGRY
+      leds: [{ row: right, color: red, pattern: blink }]
+
+  - match: { severity: high }
+    state:
+      emotion: SAD
+      leds: [{ row: right, color: red, pattern: solid }]
+
+  - match: { severity: medium }
+    state:
+      emotion: NEUTRAL
+      leds: [{ row: right, color: amber, pattern: solid }]
+
+  - match: { severity: low }
+    state:
+      emotion: NEUTRAL
+
+  - match: { severity: ambient }
+    state:
+      emotion: NEUTRAL
+
+# Commands considered destructive — permission events matching these require
+# hold-2s on the head touch to approve, instead of a single click (D6).
+# Used from Phase 2 onwards.
+criticalCommands:
+  - rm
+  - sudo
+  - "drop"
+  - "force push"
+  - "git reset --hard"
+  - delete

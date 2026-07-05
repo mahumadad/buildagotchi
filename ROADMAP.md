@@ -1,4 +1,4 @@
-# ROADMAP — StackChan Claude Buddy
+# ROADMAP — buildagotchi
 
 Plan de fases con **gates de validación** entre bloques. El MVP es Fase 2 —
 todo lo demás es condicional a que el MVP se use en la vida real.
@@ -83,7 +83,7 @@ desde el día 1 — no un monolito que después haya que refactorizar.
 ## Fase 2 — Monitor de Claude Code (el MVP)
 
 **Objetivo**: el StackChan refleja el estado real de mi trabajo con Claude Code.
-**Este es el MVP** (D20) — si no lo uso en dos semanas, no sigo con fases posteriores.
+**Este es el MVP** (D20) — si no lo uso en tres semanas (con burn-in de 3 días, ver D22), no sigo con fases posteriores.
 
 **Alcance:**
 - **`ClaudeAdapter` aislado, ultra-paranoid, multi-instancia** (D19 + D21):
@@ -293,7 +293,5 @@ dashboard muestra detalle.
 - **Distribución a otros usuarios**: instaladores, docs, community.
 - **OTA / auto-update**: firmware over-the-air para ESP32, auto-update del bridge
   (git pull + relaunch por launchd). Baja prioridad para uso personal.
-- **Adaptive behavior**: aprender horarios de FOCUS/DND del historial del Event
-  Recorder sin config manual.
 - **Trust check extendido**: triangular con más señales (revisar Jira, GitHub,
   mail) además de Claude Code.

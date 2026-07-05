@@ -6,8 +6,13 @@ proyecto y advertencias sobre trampas típicas.
 
 **Docs oficiales que hay que tener abiertas al lado**:
 - Moddable — instalación mac + esp32: <https://github.com/Moddable-OpenSource/moddable/blob/public/documentation/Moddable%20SDK%20-%20Getting%20Started.md#mac>
-- stack-chan README: [stack-chan/README.md](stack-chan/README.md) (dentro del repo clonado)
-- stack-chan firmware: [stack-chan/firmware/README.md](stack-chan/firmware/README.md)
+- stack-chan README: <https://github.com/stack-chan/stack-chan>
+- stack-chan firmware: <https://github.com/stack-chan/stack-chan/tree/main/firmware>
+
+**Nota sobre la doble identidad de directorio**: el repo público se llama
+`buildagotchi` en GitHub, pero el checkout local histórico está en
+`~/Dev/personal/Stackchan/`. Todos los paths de esta guía asumen ese local; si
+lo clonás fresco, ajustá `~/Dev/personal/Stackchan/` a donde lo pusiste.
 
 Si algo de esta guía contradice la doc oficial, la oficial gana. Las versiones se
 mueven; anotá lo que uses en [NOTES.md](NOTES.md).
@@ -151,15 +156,16 @@ esperado sin hardware.
 
 ### A6. Instalar dependencias del stack-chan firmware
 
-El firmware [stack-chan/](stack-chan/) puede requerir deps adicionales (ej. TypeScript
-runtime de Moddable). Leer [stack-chan/firmware/README.md](stack-chan/firmware/README.md)
-del repo clonado y anotar en [NOTES.md](NOTES.md) cualquier paso extra.
-
-Habitualmente:
+El firmware upstream (<https://github.com/stack-chan/stack-chan>) puede requerir
+deps adicionales (ej. TypeScript runtime de Moddable). Cloná el repo dentro de
+tu checkout local (queda gitignored — es referencia, no vendoring) y seguí su
+README:
 
 ```bash
-cd ~/Dev/personal/Stackchan/stack-chan
-# leer el README del proyecto y seguir sus instrucciones específicas
+cd ~/Dev/personal/Stackchan
+git clone https://github.com/stack-chan/stack-chan.git
+# leer stack-chan/README.md y stack-chan/firmware/README.md
+# seguir sus instrucciones específicas; anotar cualquier paso extra en NOTES.md
 ```
 
 ---
@@ -269,7 +275,10 @@ Anotar en [NOTES.md](NOTES.md) → *"Latencias medidas"*.
 El bridge Node/TS aún no se toca en Fase 0. Cuando llegue el momento:
 
 - Directorio: `Dev/personal/Stackchan/bridge/`
-- Stack: Node 20+, TypeScript, `noble` (BLE), `express` (dashboard), `zod` (schemas), `keytar` (credentials).
-- Arrancar con `npm init` y estructura de adapters desde el día 1 (ver Fase 1 en [ROADMAP.md](ROADMAP.md)).
+- Stack (ver [SPEC-FASE-1.md](SPEC-FASE-1.md) §3 para la fuente de verdad):
+  Node 20+, TypeScript strict, `@abandonware/noble` (BLE), **Fastify** (server),
+  `zod` (schemas), `keytar` (credentials), `yaml`, `pino` (logs), Vitest (tests),
+  Biome (lint/format), `tsx` (dev), `tsc → dist/` para prod (S1.5).
+- Arrancar con `npm init` y estructura de adapters desde el día 1 (ver Fase 1 en [ROADMAP.md](ROADMAP.md) y milestones M0-M6 en [SPEC-FASE-1.md](SPEC-FASE-1.md)).
 
 Pero eso viene después de validar Fase 0.
