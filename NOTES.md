@@ -1,4 +1,4 @@
-S# NOTES — Fase 0 (Discovery)
+# NOTES — Fase 0 (Discovery)
 
 Plantilla para registrar la evidencia real del kit y del entorno.
 Llenar mientras se ejecuta [SETUP.md](SETUP.md) y los pasos de Fase 0 del

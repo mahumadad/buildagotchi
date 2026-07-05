@@ -8,7 +8,9 @@ bite-sized (TDD, pasos de 2-5 min) se escribe *just-in-time* al arrancar cada fa
 
 Decisiones ancladas en [DECISIONS.md](DECISIONS.md).
 
-Estado: **Fase 0 pendiente de arrancar.**
+Estado: **Fase 0 pendiente de arrancar.** La Fase 1A (bridge en modo simulación,
+sin hardware — ver [SPEC-FASE-1.md](SPEC-FASE-1.md)) puede arrancar en paralelo
+mientras el kit llega, gracias a D11.
 
 ---
 
@@ -37,6 +39,9 @@ funcionando. Riesgos R2 y R7 con números.
 
 **Objetivo**: bridge Node/TS hablando con el StackChan por BLE. Arquitectura correcta
 desde el día 1 — no un monolito que después haya que refactorizar.
+
+**Spec detallada**: [SPEC-FASE-1.md](SPEC-FASE-1.md) — incluye la partición
+1A (sin hardware) / 1B (con hardware) y el plan de trabajo por milestones.
 
 **Alcance:**
 - **Estructura del bridge**: adapter pattern, event bus, **Attention Manager**
@@ -107,7 +112,7 @@ dispara una notif visible.
 
 ---
 
-## 🚦 Gate 1 — Validación del MVP (2 semanas de uso real)
+## 🚦 Gate 1 — Validación del MVP (3 semanas de uso real)
 
 Antes de invertir en Fase 3+, verificar los criterios de D20 con **datos duros del
 Event Recorder**:

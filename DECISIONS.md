@@ -138,6 +138,7 @@ Todos los adapters emiten al bus un mismo shape:
 
 ```ts
 interface Event {
+  schemaVersion: number;   // versionado del contrato (D26) — hoy: 1
   id: string;              // uuid
   source: string;          // 'claude' | 'chrome' | 'jira' | 'github' | 'calendar' | ...
   category: string;        // 'permission' | 'error' | 'notif' | 'milestone' | ...
@@ -206,7 +207,7 @@ salvo cambio de severidad. Después de N repeticiones muteable auto.
 
 - **Dev**: sesiones Claude Code, tokens (5h/semanal), estado de tasks/council, GitHub
   (PRs/CI/mentions), deploys, dev server local, Chrome DevTools, Jira.
-- **Ambient**: buscador voz (Fase 4: solo Claude; multi-LLM después), Google +
+- **Ambient**: buscador voz (Fase 5: solo Claude; multi-LLM después), Google +
   Atlassian Calendar, Pomodoro, break reminders.
 - **Costos**: solo Claude por ahora.
 - **Tickets**: solo Jira.
@@ -366,7 +367,7 @@ optimizamos o revisamos el diseño; nunca "se siente lento" queda anecdótico.
 recorder). Todo lo demás son *nice-to-haves* condicionales.
 
 **Éxito del MVP (criterio go/no-go para seguir con Fase 3+):**
-Después de 2 semanas del MVP en uso real, verificar:
+Después de 3 semanas del MVP en uso real (con burn-in de 3 días, ver D22), verificar:
 
 - Uso ≥5 días laborales/semana durante al menos 3 semanas seguidas.
 - Aprobé ≥50% de mis permisos desde la cabeza (no la terminal).
@@ -410,8 +411,9 @@ tratando de ser producto o quedan cerrados por comodidad.
   se las arregla leyendo SETUP.md tal cual está.
 
 **Lo que SÍ es (desde el día 1)**:
-- **Repo público en GitHub** cuando el MVP funcione (post Gate 1 mínimo).
-- **Licencia permisiva** (MIT o Apache 2.0) para que forkear sea trivial.
+- **Repo público en GitHub** — se abrió ya, en fase de docs (adelantado respecto al
+  plan original de abrir post-Gate 1; no cambia nada más de esta decisión).
+- **Licencia Apache 2.0** (decidido — `LICENSE` ya en el repo).
 - **Código legible**: no ofuscado, nombres claros, funciones cortas — el estándar
   normal de "un desarrollador entiende esto".
 - **Higiene de secretos desde el día 1**: tokens/keys en Keychain (`keytar`) o
@@ -419,8 +421,10 @@ tratando de ser producto o quedan cerrados por comodidad.
   `config.example.yaml` versionado.
 - **`.gitignore` robusto** desde Fase 1: logs de eventos, credentials, builds,
   `.env`, dumps del recorder.
-- **README honesto cuando exista** (post-MVP): "esto es mi buddy personal, andá
-  a probar, no prometo nada, PRs bienvenidos pero no revisados con SLA".
+- **README neutro y profesional** (actualizado 2026-07-05): presentación
+  orientada a que el proyecto se forkee y comparta, sin tono personal. La
+  honestidad se mantiene en el contenido (estado WIP, sin soporte, sin SLA,
+  best-effort), no en el tono.
 - **Commits que otro pueda leer** (el estilo del CLAUDE.md ya lo cubre).
 
 **Consecuencia clave**: el diseño *funcional* asume un usuario, pero el código
@@ -529,7 +533,7 @@ Detalle por fase en ROADMAP. Convención base:
 
 ### D13 — Modo Council (Fase 7)
 
-Feature dedicada, no backlog. Aprovecha los wrappers multi-LLM de Fase 4b:
+Feature dedicada, no backlog. Aprovecha los wrappers multi-LLM de Fase 5b:
 
 - Sobre una tarea/pregunta compleja: Opus trabaja, GPT y Gemini revisan (o al revés,
   según config).
@@ -586,8 +590,8 @@ pesa lo mismo que a las 23:30 si estás cansado. Multiplicador horario opcional.
 
 - **A1 — TTS**: preferencia "sin costo". Candidato principal **Piper + onnxruntime**
   en Mac (corre bien en Apple Silicon). Verificar contra defaults de Moddable en
-  Fase 4.
-- **A2 — STT**: Whisper local (whisper.cpp) vs API. Decidir en Fase 4 con confidence
+  Fase 5.
+- **A2 — STT**: Whisper local (whisper.cpp) vs API. Decidir en Fase 5 con confidence
   score → si baja, cara dudosa + pide repetir.
 - **A3 — Wake word**: motor y si vale la complejidad. Post-MVP.
 
