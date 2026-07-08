@@ -18,8 +18,8 @@ config.*.yaml
 
 # Build artifacts
 /build/
-/dist/
-/node_modules/
+dist/
+node_modules/
 *.log
 
 # Editor / OS
