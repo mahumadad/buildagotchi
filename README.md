@@ -55,6 +55,7 @@ and a local dashboard.
 | [DECISIONS.md](DECISIONS.md) | Anchored architectural decisions (D1–D26) and risks (R1–R8). The source of truth. |
 | [ROADMAP.md](ROADMAP.md) | Phased plan with validation gates between phases. |
 | [SPEC-FASE-1.md](SPEC-FASE-1.md) | Implementation spec for Phase 1 (bridge foundation + BLE link), split into 1A (no hardware) / 1B (hardware). |
+| [SPEC-IMPL-FASE-1A.md](SPEC-IMPL-FASE-1A.md) | Executable implementation plan for Phase 1A (milestones M0–M5): exact contracts, test matrices, TDD order, done criteria. |
 | [SETUP.md](SETUP.md) | Toolchain setup for ModdableSDK + ESP-IDF on macOS. |
 | [NOTES.md](NOTES.md) | Template for recording Phase 0 discovery evidence. |
 | [config.example.yaml](config.example.yaml) | Annotated template of the bridge configuration (mode, Attention Manager, dedup, stateRules, BLE, external surface). Copy to `config.yaml` (gitignored) to use. |

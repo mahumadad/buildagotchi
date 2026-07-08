@@ -65,8 +65,8 @@ que cambiar una interfaz de 1A, es un bug de esta spec y se anota en NOTES.md.
   depende de tsx ni de ningún tooling de TS en runtime.
 - **launchd**: el bridge corre como **LaunchAgent** (sesión de usuario), NO como
   LaunchDaemon. Dos razones: (a) los permisos TCC de Bluetooth necesitan poder
-  mostrar el consent dialog, imposible para un daemon de sistema; (b) keytar/
-  Keychain necesita el keychain del usuario logueado. `RunAtLoad` + `KeepAlive`.
+  mostrar el consent dialog, imposible para un daemon de sistema; (b) el acceso a
+  Keychain (vía `security(1)`) necesita el keychain del usuario logueado. `RunAtLoad` + `KeepAlive`.
 
 ## 4. Estructura de directorios
 
@@ -99,7 +99,7 @@ bridge/
       public/            # dashboard estático
     platform/
       platform.ts        # interfaz (D2)
-      macos.ts           # paths, keytar/Keychain, launchd (launchd: 1B)
+      macos.ts           # paths, Keychain vía security(1), launchd (launchd: 1B)
     index.ts             # composición + arranque
     cli.ts               # bridge [--simulate] [--config path] | bridge replay <file>
   test/
@@ -318,11 +318,11 @@ está aislado en `config/loader.ts`.
 | `GET /health` | JSON: health de adapters + salud BLE (estado, reconnects, latencia p50/p95) |
 | `GET /stream` | SSE: push en vivo de eventos/estado/health (consumible por scripts y por el dashboard cuando exista) |
 | `GET /metrics` | Prometheus text (§13) |
-| `POST /events` | D26: valida contra schema Event, fuerza `source` a `external:<nombre>`, auth Bearer (token en Keychain vía keytar), rate limit global |
+| `POST /events` | D26: valida contra schema Event, fuerza `source` a `external:<nombre>`, auth Bearer (token en Keychain vía `security(1)`), rate limit global |
 | `GET /health` | liveness del propio bridge |
 
 **Bootstrap del token (S1.7)**: `bridge init` genera el token (random 32 bytes,
-base64url), lo guarda en Keychain vía keytar y lo **imprime una sola vez** con
+base64url), lo guarda en Keychain vía `security(1)` y lo **imprime una sola vez** con
 el ejemplo de `curl` listo para copiar. Si ya existe, `bridge init` no lo pisa
 (`--rotate` para regenerar). El bridge nunca lo loguea ni lo expone por HTTP.
 
@@ -342,7 +342,7 @@ inventa nada.
   diaria, retención configurable (default 30 días).
 - **Tipos de línea** (`line_type`): `event`, `am_decision`, `state_change`,
   `health_change`, `incident`. Cada línea lleva el contexto de D15
-  (`cognitiveLoadScore` — null en Fase 1 —, `activeMode`, `bleHealthy`,
+  (`metabolicScore` — null en Fase 1 —, `activeMode`, `bleHealthy`,
   `adapterHealth`).
 - **Replay**: `bridge replay <file> [--speed N | --instant]` re-inyecta solo las
   líneas `event` al bus, con el recorder marcando `replay: true` (un replay no

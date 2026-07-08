@@ -277,7 +277,7 @@ El bridge Node/TS aún no se toca en Fase 0. Cuando llegue el momento:
 - Directorio: `Dev/personal/Stackchan/bridge/`
 - Stack (ver [SPEC-FASE-1.md](SPEC-FASE-1.md) §3 para la fuente de verdad):
   Node 20+, TypeScript strict, `@abandonware/noble` (BLE), **Fastify** (server),
-  `zod` (schemas), `keytar` (credentials), `yaml`, `pino` (logs), Vitest (tests),
+  `zod` (schemas), Keychain vía `security(1)` (credentials, sin dep nativa), `yaml`, `pino` (logs), Vitest (tests),
   Biome (lint/format), `tsx` (dev), `tsc → dist/` para prod (S1.5).
 - Arrancar con `npm init` y estructura de adapters desde el día 1 (ver Fase 1 en [ROADMAP.md](ROADMAP.md) y milestones M0-M6 en [SPEC-FASE-1.md](SPEC-FASE-1.md)).
 

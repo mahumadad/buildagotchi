@@ -155,7 +155,7 @@ al firmware. Toda la complejidad vive del lado Mac.
   - **Ampliación post-MVP**: si el proyecto se usa y hay demanda, empaquetar para
     Linux/Windows es una fase separada — la capa `platform/` la hace mecánica.
   - Puntos que la capa cubrirá: servicio de auto-arranque (launchd/systemd/Task
-    Scheduler), credential storage (`keytar` npm ya abstrae los tres), paths de
+    Scheduler), credential storage (Keychain vía `security(1)` en macOS; equivalente por OS), paths de
     Chrome y `~/.claude`, comandos para relanzar Chrome.
 - **NO Rust**: BLE/MCP/CDP/LLM SDKs menos maduros en Rust; curva de aprendizaje enorme
   vs valor real para el volumen de eventos esperado (decenas/minuto, no miles/seg).
@@ -490,7 +490,7 @@ tratando de ser producto o quedan cerrados por comodidad.
 - **Licencia Apache 2.0** (decidido — `LICENSE` ya en el repo).
 - **Código legible**: no ofuscado, nombres claros, funciones cortas — el estándar
   normal de "un desarrollador entiende esto".
-- **Higiene de secretos desde el día 1**: tokens/keys en Keychain (`keytar`) o
+- **Higiene de secretos desde el día 1**: tokens/keys en Keychain (vía `security(1)`) o
   variables de entorno, nunca en archivos versionados. `config.yaml` gitignored,
   `config.example.yaml` versionado.
 - **`.gitignore` robusto** desde Fase 1: logs de eventos, credentials, builds,

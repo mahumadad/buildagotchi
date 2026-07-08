@@ -55,7 +55,7 @@ dedup:
   windowSeconds: 60
   autoMuteAfter: 10
 
-# POST /events external surface (D26). Token stored in Keychain via keytar,
+# POST /events external surface (D26). Token stored in Keychain via security(1),
 # generated with `bridge init` (S1.7). Requests without a valid Bearer token
 # are rejected with 401. Rate limit applies globally to all external sources.
 external:
