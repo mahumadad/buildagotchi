@@ -190,7 +190,7 @@ Cola priorizada: orden por (severidad desc, timestamp asc).
   severidad más viejo, con `am_decision: {action: 'dropped', reason: 'queue_full'}`.
 - **Idle**: cola vacía + `transitionToBackgroundMoodDelay` (default 2s) →
   background mood. En Fase 1 el mood es NEUTRAL fijo (con motions vivos del
-  firmware); el Cognitive Load lo reemplaza en Fase 4 sin cambiar esta interfaz.
+  firmware); el Metabolic State lo reemplaza en Fase 4 sin cambiar esta interfaz.
 - Toda decisión (chose / interrupted / expired / dropped / requeued) va al
   recorder como línea `am_decision`.
 
@@ -313,8 +313,10 @@ está aislado en `config/loader.ts`.
 
 | Ruta | Qué |
 |---|---|
-| `GET /` | Dashboard: estado actual + cola del AM, últimos N eventos, health de adapters, salud BLE (estado, reconnects, latencia p50/p95), layout de Cognitive Load (placeholder Fase 1), botones replay 30min/hoy |
-| `GET /stream` | SSE: push en vivo de eventos/estado/health al dashboard |
+| `GET /state` | JSON: estado actual + cola del AM (Fase 1 se queda en JSON para evitar dashboarditis; la UI llega en Fase 2 cuando hay algo real que mostrar) |
+| `GET /events` | JSON: últimos N eventos |
+| `GET /health` | JSON: health de adapters + salud BLE (estado, reconnects, latencia p50/p95) |
+| `GET /stream` | SSE: push en vivo de eventos/estado/health (consumible por scripts y por el dashboard cuando exista) |
 | `GET /metrics` | Prometheus text (§13) |
 | `POST /events` | D26: valida contra schema Event, fuerza `source` a `external:<nombre>`, auth Bearer (token en Keychain vía keytar), rate limit global |
 | `GET /health` | liveness del propio bridge |

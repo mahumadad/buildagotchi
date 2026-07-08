@@ -41,7 +41,7 @@ attentionManager:
 
   maxQueueSize: 20                                # drops oldest lowest-severity when full
   replacementPolicy: higher_severity_interrupts   # or: always_enqueue
-  transitionToBackgroundMoodDelay: 2s             # gap before falling back to Cognitive Load
+  transitionToBackgroundMoodDelay: 2s             # gap before falling back to Metabolic State
 
   # What to do with queued events when the active mode changes.
   onModeChange:
@@ -118,3 +118,14 @@ criticalCommands:
   - "force push"
   - "git reset --hard"
   - delete
+
+# Personality preset (D28). Layer of expression on top of the pipeline —
+# changes templates and idle defaults, not architecture.
+# Presets: companion | supervisor | critic | mascot | custom
+# Preset files live in `presets/personalities/<name>.yaml`.
+personality:
+  preset: companion
+  ttsEnabled: false               # default off until Phase 5
+  # templates:                    # only when preset: custom
+  #   permission.pending: "..."
+  #   build.failed: "..."

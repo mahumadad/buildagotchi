@@ -47,15 +47,12 @@ desde el día 1 — no un monolito que después haya que refactorizar.
 - **Estructura del bridge**: adapter pattern, event bus, **Attention Manager**
   (arbitra prioridad, TTL, expiración, reemplazo), state machine central, capa
   `platform/` (D2) para lo macOS-específico.
-- **Modo simulation** (`--simulate`): bridge sin BLE real; imprime a stdout +
-  dashboard qué habría mandado. Habilita desarrollo de fases 2-7 sin hardware.
-- **Dashboard local** (`localhost:1780`):
-  - Estado actual + Cognitive Load con breakdown de componentes (aunque el score
-    todavía no exista en Fase 1, el layout se deja listo).
-  - Últimos eventos.
-  - **Health de cada adapter** (HEALTHY/DEGRADED/BROKEN, último evento, latencias).
-  - Salud del BLE.
-  - **Botones**: replay last 30 min / replay today.
+- **Modo simulation** (`--simulate`): bridge sin BLE real; imprime a stdout
+  qué habría mandado. Habilita desarrollo de fases 2-7 sin hardware.
+- **Endpoints JSON mínimos** (localhost:1780): `GET /state`, `GET /events`,
+  `GET /health`. Inspección con `curl`. **Sin UI todavía** — la UI llega en
+  Fase 2 cuando exista algo real que mostrar (evita dashboarditis: infraestructura
+  para un producto que aún no existe).
 - **`/metrics` endpoint** (D23): Prometheus-text con eventos/min, BLE reconnects,
   heartbeat misses, adapter failures, parser errors, latencias p50/p95.
 - **`POST /events` endpoint** (D26): superficie HTTP para que procesos externos
@@ -71,7 +68,7 @@ desde el día 1 — no un monolito que después haya que refactorizar.
   y evento `button_pressed`.
 
 **Test end-to-end**:
-1. Simulation: dashboard muestra flujo completo sin hardware.
+1. Simulation: `curl localhost:1780/state` muestra flujo completo sin hardware.
 2. Real: `setFace('HAPPY')` cambia la cara; botón A → evento logueado.
 3. Matar bridge → firmware entra safe mode → volver a arrancar → state_sync.
 4. Matar firmware → bridge detecta por heartbeat → reconecta → resync.
@@ -104,6 +101,14 @@ desde el día 1 — no un monolito que después haya que refactorizar.
 - **MCP server del bridge — versión mínima** (D26): tools `notify()` y
   `set_face()` expuestas para que Claude Code (u otro agente MCP) las llame.
   Se extiende en fases posteriores (`speak`, `blink_led`, `look_at`, etc.).
+  **MCP resources** (`state/current`, `health`) para que agentes consulten
+  el estado antes de decidir si interrumpir.
+- **Dashboard local** (`localhost:1780`, UI web): estado actual + Metabolic Score
+  con breakdown, últimos eventos, health de adapters + BLE, botones de replay
+  (30 min / today). Se construye ahora porque hay algo real que observar.
+- **Personalidad activa** (D28): preset default `companion` — cara + decorators,
+  sin TTS todavía. Los otros presets viven en `presets/personalities/` para
+  quien quiera cambiar.
 
 **Verificación**: al correr Claude Code, el StackChan cambia de estado real. Aprobar
 un permiso desde la cabeza funciona con la guarda correcta. Mismo error repetido no
@@ -157,14 +162,14 @@ direccionadas al lado correcto, respetando modo activo.
 
 ---
 
-## Fase 4 — Ambient + Cognitive Load (el diferencial fuerte)
+## Fase 4 — Ambient + Metabolic State (el diferencial fuerte)
 
 **Objetivo**: el "background mood" del sistema. Con adapters de Fase 3 activos, ya hay
 suficientes inputs para un score de carga con sentido.
 
 **Alcance:**
-- **Cognitive Load score** (D14) con heurística simple y pesos declarativos:
-  - Score 0-100 con derivación categórica FLOW/FOCUSED/BUSY/OVERLOADED/BLOCKED
+- **Metabolic State score** (D14) con heurística simple y pesos declarativos:
+  - Score 0-100 con derivación categórica CALM/FLOW/SATURATED/OVERLOADED/EXHAUSTED
   - Cara refleja el rango, decorators (sweat) aparecen en niveles altos
   - Solo alimenta cara cuando no hay evento activo — no pisa reacciones concretas
   - Ponderación horaria contextual (afinable)
@@ -181,7 +186,7 @@ en FOCUS solo pasan urgentes.
 
 ## 🚦 Gate 2 — ¿Sigue aportando valor?
 
-Con Cognitive Load funcionando, evaluar antes de invertir en voz:
+Con Metabolic State funcionando, evaluar antes de invertir en voz:
 
 - ¿La cara con carga me da información que uso?
 - ¿Miro el buddy en vez de revisar Mac cada X min?

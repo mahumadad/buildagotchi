@@ -27,6 +27,12 @@ una decisión los viola, la decisión está mal — no los principios.
 - **Presencia física por interpolación, no por variables**. La sensación de
   estar vivo viene de la física del movimiento (breathing, saccades, morphing
   entre expresiones), no de contadores simulados en memoria. Ver D27.
+- **Agnóstico al display**. StackChan (M5Stack CoreS3) es el primer target,
+  no el único. El bridge (event bus + Attention Manager + `stateRules` + MCP)
+  es hardware-agnostic por diseño; el firmware es intercambiable. Hoy StackChan
+  vía BLE; mañana podría ser una pantalla OLED en Pi, una app móvil, o un
+  wearable. **Corolario operativo**: no abstraer preventivamente. Cuando exista
+  el segundo target, factorizamos. Antes, YAGNI.
 
 ---
 
@@ -51,7 +57,7 @@ StackChan (firmware Moddable, ESP32-S3)
       ├─ Event bus + adapter pattern (cada fuente = adapter aislado)
       ├─ Attention Manager (arbitra prioridad, TTL, expiración, reemplazo de eventos concurrentes)
       ├─ State machine → resuelve a {emoción, prioridad, dirección, LEDs, sonido} y lo manda al firmware
-      ├─ Cognitive Load engine (background mood cuando no hay evento activo, con decay temporal)
+      ├─ Metabolic State engine (background mood cuando no hay evento activo, con decay temporal)
       ├─ Event Recorder (ndjson append-only, incluye score + mode + BLE health por línea)
       ├─ Simulation mode (correr sin hardware para dev en paralelo)
       ├─ Dashboard local (localhost:port): estado + breakdown de load + health de adapters + replay
@@ -74,7 +80,7 @@ StackChan (firmware Moddable, ESP32-S3)
 ¿Qué evento gana? ¿Quién expira al anterior? ¿Quién libera la cara al terminar? El
 Attention Manager mantiene una cola priorizada con TTL por evento, política de
 reemplazo (mayor severidad interrumpe, misma severidad encola), y transición a
-"background mood" (Cognitive Load) cuando la cola queda vacía.
+"background mood" (Metabolic State) cuando la cola queda vacía.
 
 **Políticas configurables en `config.yaml`:**
 
@@ -283,7 +289,7 @@ usuario — es infraestructura que habilita mucho a bajo costo:
   "ts": 1234567890,
   "payload": { /* ... */ },
   // Contexto en el momento del evento (para daily review sin re-simular):
-  "cognitiveLoadScore": 47,
+  "metabolicScoreScore": 47,
   "activeMode": "FOCUS",
   "bleHealthy": true,
   "adapterHealth": "HEALTHY"
@@ -311,7 +317,7 @@ Evita que el buddy parezca "permanentemente estresado" cuando una fuente ruidosa
 ### D18 — Config hot-reload
 
 `config.yaml` se recarga sin reiniciar el daemon. Tunear umbrales, pesos de
-Cognitive Load, mapeos, prioridades — todo iterativo. Un endpoint del dashboard
+Metabolic State, mapeos, prioridades — todo iterativo. Un endpoint del dashboard
 (o watcher de archivo) dispara la recarga. Validación de schema antes de aplicar.
 
 ### D19 — ClaudeAdapter ultra-paranoid parsing
@@ -494,7 +500,7 @@ event bus + Attention Manager, y desbloquea integraciones que no anticipamos.
    Referencia de catálogo: `kisaragi-mochi/stackchan-mcp` (25+ tools).
 
 3. **MCP resources (lectura del estado)** — Fase 2+, **superficie bidireccional**:
-   - `mcp://buildagotchi/state/current` → `{ emotion, decorators, cognitiveLoad,
+   - `mcp://buildagotchi/state/current` → `{ emotion, decorators, metabolicScore,
      mode, activeEvent, queueDepth, ... }`
    - `mcp://buildagotchi/attention/queue` → cola actual del Attention Manager
    - `mcp://buildagotchi/health` → estado de adapters + BLE + bridge
@@ -562,6 +568,49 @@ con pixel-art. La app necesita mecánicas adictivas (tamagotchi life) para
 que no cierres la pestaña. El hardware físico ya tiene presencia — solo
 necesita micro-señales de vida, no dramatismo.
 
+### D28 — Personalidad como preset configurable (default: "compañero silencioso")
+
+Sin personalidad definida, `stateRules` y los mensajes de TTS son arbitrarios.
+Con personalidad *fija*, el proyecto pierde adaptabilidad. Solución:
+**personalidad = preset de templates + defaults**, seleccionable en
+`config.yaml`. No cambia arquitectura — solo strings y algunas emociones default.
+
+**Presets iniciales**:
+
+| Preset | Vibe | Ejemplo TTS (permiso pendiente) | Cara base idle |
+|---|---|---|---|
+| `companion` (**default**) | Presencia empática, poco parlanchín | *(silencio; cara DOUBTFUL + LED ámbar)* | NEUTRAL cálida |
+| `supervisor` | Formal, directo, mínimo | "Autorización requerida" | NEUTRAL firme |
+| `critic` | Cuestionador, seco | "¿Estás seguro de eso?" | DOUBTFUL |
+| `mascot` | Sin palabras, sonidos y ojos | *(chirp + eyes wide)* | CURIOUS |
+
+**Default = `companion`**: presencia sin invasión, alineado con Calm Tech.
+TTS ausente por default en Fase 2-4; solo entra en Fase 5 y para eventos
+críticos. Los otros presets existen para adaptación por fork o por gusto.
+
+**Estructura en `config.yaml`**:
+
+```yaml
+personality:
+  preset: companion            # companion | supervisor | critic | mascot | custom
+  ttsEnabled: false            # default off hasta Fase 5
+  templates:                   # solo si preset: custom
+    permission.pending: "..."
+    build.failed: "..."
+```
+
+Los presets viven en `presets/personalities/<name>.yaml` en el repo. Cada
+uno define: templates de mensajes por categoría de evento, decorators
+default por severidad, emoción idle. Un fork puede agregar `presets/goth/`
+sin tocar el bridge.
+
+**Qué NO define un preset**: prioridades, dedup, error budgets, mapeo
+severity → cola. Esas son políticas del bridge. La personalidad es
+**capa de expresión** encima del pipeline decisión.
+
+**Consecuencia**: la pregunta "¿qué es buildagotchi?" tiene una respuesta
+del usuario, no del proyecto. El default responde por él si no elige.
+
 ---
 
 ## Mapeo hardware ↔ función (resumen)
@@ -599,7 +648,7 @@ Detalle por fase en ROADMAP. Convención base:
   ancho de banda real para datos es bajo; audio duplex por BLE tiene latencia
   típicamente inaceptable. Fase 0 confirma; si contradice, ajustar.
 - **R8 — Fatiga del usuario**: si el buddy es demasiado hablador/cambiante, pasa de
-  útil a molesto. Mitigaciones: error budget por adapter (D17), Cognitive Load solo
+  útil a molesto. Mitigaciones: error budget por adapter (D17), Metabolic State solo
   pisa la cara en idle emocional (D14), decay temporal (D14), dedup (D5), safe mode
   (D16) evita alarmismo cuando el bridge muere. El tuning fino de umbrales/pesos vive
   en `config.yaml` con hot-reload (D18) para ajustar sin fricción durante uso real.
@@ -626,7 +675,7 @@ Feature dedicada, no backlog. Aprovecha los wrappers multi-LLM de Fase 5b:
 - Producto en sí mismo — nadie lo tiene en un buddy físico. Prioridad post-MVP pero
   compromiso, no wishlist.
 
-### D14 — Cognitive Load score (Fase 4)
+### D14 — Metabolic State score (Fase 4)
 
 Score agregado **0-100** que resume la carga del momento. Entradas ponderadas
 declarativas en `config.yaml`:
@@ -650,11 +699,17 @@ evita que un incidente viejo tenga a la cara enojada todo el día. Formato:
 permisos ∞ (siempre urgentes), reuniones lineales al tiempo restante, PRs 6h.
 
 **Derivación categórica** (no señal paralela — evita duplicar estado):
-- 0-20 → FLOW
-- 21-40 → FOCUSED
-- 41-60 → BUSY
+- 0-20 → CALM
+- 21-40 → FLOW
+- 41-60 → SATURATED
 - 61-80 → OVERLOADED
-- 81-100 → BLOCKED
+- 81-100 → EXHAUSTED
+
+**Metabolismo, no cognición**: la elección del término es deliberada. El
+sistema no *piensa* que estás sobrecargado — *se satura* como respuesta
+fisiológica a inputs. Esto refuerza que no hay lógica de "vida" ni
+resentimiento acumulado (violaría el principio de "espejo determinista"):
+inputs actuales → nivel actual, con decay temporal como única memoria.
 
 La cara se vuelve más estresada conforme sube (NEUTRAL → DOUBTFUL → SAD → ANGRY +
 sweat decorator + LEDs más intensos). **Solo alimenta la cara cuando el sistema

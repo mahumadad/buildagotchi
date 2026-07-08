@@ -103,7 +103,7 @@ a deeper review before Phase 2:
 | [stackchan-codex-bridge](https://github.com/chuankris/stackchan-codex-bridge) | Mac daemon + Node.js/TS + MCP + WebSocket to StackChan — closest analog to our bridge architecture. |
 | [stackchan-xiaozhi-firmware](https://github.com/heavenchenggong/stackchan-xiaozhi-firmware) | ESP-IDF CoreS3 firmware exposing servos as MCP tools + on-device wake-word (Multinet6). |
 | [kisaragi-mochi/stackchan-mcp](https://github.com/kisaragi-mochi/stackchan-mcp) | Python ↔ ESP-IDF MCP bridge with rich tools (servos, camera, LEDs, TTS/STT). |
-| [stackchan-display](https://github.com/botamochi6277/stackchan-display) | Face rendering with `ExpressionWeight` — smooth morphing between emotions. Reference for Cognitive Load visuals. |
+| [stackchan-display](https://github.com/botamochi6277/stackchan-display) | Face rendering with `ExpressionWeight` — smooth morphing between emotions. Reference for Metabolic State visuals. |
 | [stackchan-playground](https://github.com/Ryota-Nakamura-317/stackchan-playground) | M5Stack CoreS3 experiments with a Claude Code notifier (AquesTalk TTS). |
 | [AI_StackChan_Ex](https://github.com/ronron-gh/AI_StackChan_Ex) | Local LLM via Module LLM Realtime API + modular app framework. Reference for offline mode. |
 | [jarvis](https://github.com/owen4sure/jarvis) | Full stack (agent orchestration + multi-channel memory + MLX Whisper). Broad reference. |
