@@ -3,7 +3,30 @@
 Registro de decisiones arquitectónicas del proyecto. Actualizar cuando una decisión
 cambie; no borrar las rechazadas (evita re-litigar).
 
-Última actualización: 2026-07-05
+Última actualización: 2026-07-06
+
+---
+
+## Principios de diseño (arriba de todas las decisiones)
+
+Estos principios ganan cuando entran en conflicto con una decisión puntual. Si
+una decisión los viola, la decisión está mal — no los principios.
+
+- **Calm Tech**. buildagotchi opera en la periferia de la atención (Mark Weiser,
+  Xerox PARC). Informa sin demandar foco. Cada feature nueva debe pasar el
+  filtro "¿esto opera en periferia, o interrumpe?". TTS ruidoso cada 5 min
+  falla el filtro; un micro-movimiento de servos cuando cambia estado lo pasa.
+- **Espejo determinista, no simulador**. El buddy refleja realidad presente
+  derivada de eventos verificables. No hay estado emocional acumulado ficticio
+  (`hunger`, `resentment`, `xp`). Transiciones limpias: evento → estado. Sin
+  "OK pero triste porque antes falló". Violar esto rompe D22 (trust checks).
+- **Mecanismo, no política**. El bridge es un pipeline agnóstico al significado.
+  Eventos entran, `stateRules` los interpreta, la cara reacciona. Políticas
+  alternativas (tamagotchi de repos, coach de foco, whatever) viven en forks
+  o en adapters de terceros — no como flags oficiales del bridge. YAGNI aplica.
+- **Presencia física por interpolación, no por variables**. La sensación de
+  estar vivo viene de la física del movimiento (breathing, saccades, morphing
+  entre expresiones), no de contadores simulados en memoria. Ver D27.
 
 ---
 
@@ -470,6 +493,22 @@ event bus + Attention Manager, y desbloquea integraciones que no anticipamos.
    Cualquier agente MCP (Claude Code, Cursor, Aider, script custom) los llama.
    Referencia de catálogo: `kisaragi-mochi/stackchan-mcp` (25+ tools).
 
+3. **MCP resources (lectura del estado)** — Fase 2+, **superficie bidireccional**:
+   - `mcp://buildagotchi/state/current` → `{ emotion, decorators, cognitiveLoad,
+     mode, activeEvent, queueDepth, ... }`
+   - `mcp://buildagotchi/attention/queue` → cola actual del Attention Manager
+   - `mcp://buildagotchi/health` → estado de adapters + BLE + bridge
+   - `mcp://buildagotchi/history/recent?minutes=N` → últimos eventos del Recorder
+
+   El buddy deja de ser solo actuador y se vuelve **estado compartido del
+   ecosistema de agentes**. Un LLM que quiere pedir input puede consultar
+   `state/current` antes de decidir si interrumpir ("¿el buddy ya está
+   DOUBTFUL por otra cosa? Espero"). Un script de deploy puede consultar
+   `attention/queue` para decidir si esperar. Trust check automatizable:
+   agente lee `state/current` en vez de que el usuario mire la cara.
+
+   Read-only, sin auth para localhost (información no destructiva).
+
 **Todos los eventos externos caen en el mismo pipeline**: event bus →
 Attention Manager → State Machine → firmware. El campo `source` identifica al
 emisor para trazabilidad en el Event Recorder (D15) y para aplicar error
@@ -490,6 +529,38 @@ budgets diferenciados (D17).
 **Consecuencia**: features futuras se pueden **prototipar sin escribir un
 adapter**. Un shell one-liner que hace `curl` alcanza para probar si vale la
 pena la integración antes de invertir en un adapter permanente.
+
+### D27 — Vitality layer separada del state layer
+
+La sensación de "estar vivo" del buddy **no viene de datos** — viene de la
+física del movimiento. Capa siempre activa, ortogonal al state machine, que
+no representa ningún evento:
+
+- **Breathing**: micro-oscilación de servos en idle (ej. ±2° en pitch cada
+  4s, patrón sinusoidal con jitter para que no sea mecánico).
+- **Saccades / blinking**: ya como decorators — se ejecutan sobre cualquier
+  emoción actual sin pisarla.
+- **Interpolación física entre estados** (referencia: `ExpressionWeight` de
+  `stackchan-display`): al pasar de NEUTRAL a SAD, la cara **morfea** en
+  ~300-600ms, no switchea de golpe. Los servos también interpolan.
+- **Micro-jitter en LEDs**: si un LED está "solid amber", en realidad
+  fluctúa ±3% de brillo cada 500ms. No perfectamente estático.
+
+**Por qué separado del state layer**: si el vitality vive en el mismo lugar
+que la resolución de emociones, se contamina — un breathing "irregular" se
+lee como estado triste. Debe ser una capa que se **superpone** al estado
+resuelto: primero el state machine decide "SAD + rojo sólido", después el
+vitality layer aplica breathing + jitter encima.
+
+**Configurable, no eliminable**: `config.yaml` permite bajar la amplitud
+del breathing o desactivarlo (modo SLEEP lo hace más lento y sutil), pero
+no se apaga completamente en modos activos. Si el buddy se queda 100%
+estático, se lee como "colgado", no como "en reposo".
+
+**Consecuencia diferencial**: es lo que separa buildagotchi de una app web
+con pixel-art. La app necesita mecánicas adictivas (tamagotchi life) para
+que no cierres la pestaña. El hardware físico ya tiene presencia — solo
+necesita micro-señales de vida, no dramatismo.
 
 ---
 
