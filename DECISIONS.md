@@ -3,7 +3,7 @@
 Registro de decisiones arquitectónicas del proyecto. Actualizar cuando una decisión
 cambie; no borrar las rechazadas (evita re-litigar).
 
-Última actualización: 2026-07-06
+Última actualización: 2026-07-06 (council: D19 reescrito, D21 ajustado, A1 cerrada)
 
 ---
 
@@ -66,7 +66,7 @@ StackChan (firmware Moddable, ESP32-S3)
       └─ Memory local (dedup por event_hash + last_seen + count)
       ↕
    Adapters (cada uno con health status HEALTHY/DEGRADED/BROKEN):
-   ├─ ClaudeAdapter (aislado — jsonl contrato interno; multi-instancia por PID+cwd)
+   ├─ ClaudeAdapter (hooks oficiales + one-shot transcript reads; multi-instancia por session_id — D19)
    ├─ ChromeAdapter (CDP, plugin reemplazable)
    ├─ MCPAdapter (MCP server para que Claude Code lo consuma)
    ├─ LLMAdapter (OpenAI, Gemini)
@@ -320,31 +320,67 @@ Evita que el buddy parezca "permanentemente estresado" cuando una fuente ruidosa
 Metabolic State, mapeos, prioridades — todo iterativo. Un endpoint del dashboard
 (o watcher de archivo) dispara la recarga. Validación de schema antes de aplicar.
 
-### D19 — ClaudeAdapter ultra-paranoid parsing
+### D19 — ClaudeAdapter: hooks oficiales + lectura one-shot (council 2026-07-06)
 
-`~/.claude/*.jsonl` es contrato interno y puede cambiar sin aviso. El adapter:
+**Decidido por council** con evidencia del ecosistema (ComandOS, ccboard,
+claude-push usan hooks; claude-session-dashboard/ccusage tailean y se rompen
+con cada cambio de formato).
 
-- Valida schema por línea, tolera desconocidos.
-- Si una línea no matchea, la loguea a nivel warn y **skipea** — no crashea el bridge.
-- Tests con fixtures de logs reales del usuario (grabados) + fixtures corruptos.
-- Aislado detrás de una interfaz estable — si el formato cambia mucho, cambia solo
-  este archivo.
-- **Multi-instancia**: tracker por `pid + cwd`. Cada sesión de Claude Code activa es
-  un item en la cola. Al pedir permiso, el dashboard/cara muestra de cuál sesión
-  (path del proyecto). Aprobar desde la cabeza aplica a la sesión al frente de la
-  cola por prioridad.
+**Fuente primaria: hooks oficiales de Claude Code** (`settings.json`). Son la
+API publicada de eventos — entregan `hook_event_name`, `session_id`, `cwd` y
+`transcript_path` por stdin. Eventos que consumimos: `SessionStart`,
+`UserPromptSubmit`, `Stop`, `Notification` (permission/idle), `SessionEnd`.
+El hook es un script mínimo que postea al bridge por `POST /events` (D26 —
+el ClaudeAdapter reusa la superficie externa; casi no hay código nuevo).
+
+**Enriquecimiento: lectura one-shot del transcript** que el propio hook
+entrega (`transcript_path`), disparada por el hook — nunca un tailer
+continuo. Patrón ComandOS (`turn_text()`): al llegar `Stop`/`Notification`,
+leer el final del JSONL para extraer texto de respuesta, comando del
+permiso, tokens del turno. Parsing tolerante (D21) aplica a ESTA lectura.
+
+**Tailing continuo: rechazado** (ver Opciones rechazadas). Todo lo que el
+MVP necesita lo dan hooks + one-shot reads + ccusage/API para cuota (patrón
+Clawdmeter).
+
+**Reglas del hook script** (no negociables):
+- **Nunca bloquea a Claude Code**: `curl -m 2` fire-and-forget, exit 0 siempre.
+- **Fallback local**: si el bridge no responde, escribe state file en
+  `~/.buildagotchi/claude-state/<session_id>.json` — el bridge los lee al
+  arrancar (resync) y así un bridge caído no pierde estado (protege D22).
+- `bridge init --hooks` instala/actualiza la config de hooks en
+  `settings.json` con diff visible y confirmación (patrón ccboard). `bridge
+  doctor` verifica que sigan instalados.
+
+- **Multi-instancia**: tracker por `session_id` (lo da el hook — reemplaza el
+  plan anterior de inferir `pid + cwd`). Cada sesión activa es un item en la
+  cola; al pedir permiso, la cara muestra de cuál sesión (path corto del
+  `cwd`). Aprobar desde la cabeza aplica a esa sesión.
+- **Nota a futuro (D6)**: los hooks `PreToolUse` pueden *responder*
+  allow/deny — único mecanismo que permitiría aprobar desde la cabeza sin
+  keystroke injection. Se explora en Fase 2; el tailing jamás podría
+  (read-only).
 
 ### D21 — ClaudeAdapter con health status explícito
 
 El peor escenario del ClaudeAdapter no es "no funciona" — es **mentir en silencio**.
-Contramedida: el adapter mantiene un estado observable:
+Contramedida: el adapter mantiene un estado observable. Con D19 basado en hooks
+(council 2026-07-06), las señales de salud son dos:
 
-- **HEALTHY** (<5% líneas desconocidas en ventana móvil): opera normal.
-- **DEGRADED** (5-20% desconocidas): sigue operando, cara muestra decorator "?"
-  discreto, dashboard alerta amarillo.
-- **BROKEN** (>20% desconocidas o parser crash repetido): cara pasa a estado
-  DOUBTFUL con speech balloon **"Claude cambió"**. Dashboard marca rojo. El buddy
-  no pretende saber lo que no sabe.
+1. **Salud del canal de hooks** — el silencio no es salud:
+   - **HEALTHY**: hooks instalados (verificado en `settings.json`) y al menos
+     un evento recibido desde el último `SessionStart` conocido.
+   - **DEGRADED**: hay sesiones de Claude Code corriendo (detectables por
+     proceso) pero cero hooks en >N min, o `bridge doctor` detecta hooks
+     ausentes/pisados en `settings.json` (otra tool pudo sobreescribirlos).
+   - **BROKEN**: hooks desinstalados o el script falla repetidamente.
+2. **Salud del parsing one-shot** (la lectura del transcript que dispara el
+   hook): % de líneas desconocidas en las últimas K lecturas —
+   - **HEALTHY** <5%, **DEGRADED** 5-20% (decorator "?" discreto),
+   - **BROKEN** >20% o crash repetido → cara DOUBTFUL + balloon **"Claude
+     cambió"**. El buddy no pretende saber lo que no sabe. Nota: transcript
+     roto degrada el *enriquecimiento* (detalles), no la *detección* (hooks
+     siguen entregando estado básico).
 
 Umbrales configurables. Aplica el mismo patrón a otros adapters con contratos
 frágiles (ChromeAdapter si Google endurece CDP, etc.).
@@ -723,12 +759,22 @@ pesa lo mismo que a las 23:30 si estás cansado. Multiplicador horario opcional.
 
 ## Decisiones abiertas
 
-- **A1 — TTS**: preferencia "sin costo". Candidato principal **Piper + onnxruntime**
-  en Mac (corre bien en Apple Silicon). Verificar contra defaults de Moddable en
-  Fase 5.
 - **A2 — STT**: Whisper local (whisper.cpp) vs API. Decidir en Fase 5 con confidence
   score → si baja, cara dudosa + pide repetir.
 - **A3 — Wake word**: motor y si vale la complejidad. Post-MVP.
+
+### A1 — TTS: Piper primario + `say` fallback (CERRADA, council 2026-07-06)
+
+- **Contrato**: `TTSProvider` — `synthesize(text) → WAV`. El bridge genera el
+  WAV y lo manda por WiFi al speaker del firmware (R7). Provider elegible por
+  config, sin tocar el pipeline.
+- **Primario: Piper** (offline, gratis, voces es_MX/es_ES `.onnx`, probado en
+  ComandOS y corre en Apple Silicon).
+- **Fallback: `say` de macOS** (`say -o out.wav --data-format=LEF32@22050`) —
+  cero dependencias, siempre disponible. Mitiga el riesgo de bitrot de Piper
+  (el proyecto original rhasspy/piper está en transición de mantenimiento).
+- Verificación práctica (instalar Piper, generar un WAV es_MX, medir latencia)
+  = primer spike de Fase 5. Si Piper falla, `say` ya cumple el contrato.
 
 ---
 
@@ -742,6 +788,13 @@ pesa lo mismo que a las 23:30 si estás cansado. Multiplicador horario opcional.
   y rompería compat con la spec de REFERENCE.md. Reconsiderar solo si evidencia real
   de bottleneck.
 - **Personalidad evolutiva, multi-buddy**: over-engineering, backlog lejano.
+- **Tailing continuo de `~/.claude/*.jsonl` como fuente primaria del
+  ClaudeAdapter** (council 2026-07-06): el formato es contrato interno y cambia
+  sin aviso (evidencia: ccusage y claude-session-dashboard se rompen con
+  releases). Los hooks oficiales cubren todo lo que el MVP necesita con API
+  publicada. El transcript solo se lee one-shot cuando un hook lo entrega
+  (D19). Reconsiderar únicamente si aparece una necesidad que los hooks no
+  cubran y que justifique mantener un parser continuo.
 - **Rust para el bridge**: BLE/MCP/CDP/LLM SDKs menos maduros en Rust; curva enorme
   vs valor real para el volumen esperado. Reconsiderar solo si aparece un bottleneck
   medible.

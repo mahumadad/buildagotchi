@@ -83,10 +83,14 @@ desde el día 1 — no un monolito que después haya que refactorizar.
 **Este es el MVP** (D20) — si no lo uso en tres semanas (con burn-in de 3 días, ver D22), no sigo con fases posteriores.
 
 **Alcance:**
-- **`ClaudeAdapter` aislado, ultra-paranoid, multi-instancia** (D19 + D21):
-  tailer de `~/.claude/*.jsonl` con parsing tolerante; tracker por `pid + cwd`
-  (múltiples sesiones simultáneas de Claude Code); health status HEALTHY/DEGRADED/
-  BROKEN — si BROKEN, cara muestra "Claude cambió", no miente en silencio.
+- **`ClaudeAdapter` basado en hooks oficiales, multi-instancia** (D19 + D21):
+  hooks de Claude Code (`SessionStart`/`UserPromptSubmit`/`Stop`/`Notification`/
+  `SessionEnd`) postean a `POST /events`; lectura one-shot del transcript que
+  entrega el hook para enriquecer (texto, comando del permiso, tokens del turno).
+  Tracker por `session_id`. `bridge init --hooks` instala; `bridge doctor`
+  verifica. Health status HEALTHY/DEGRADED/BROKEN con doble señal (canal de
+  hooks + parsing one-shot) — si BROKEN, cara muestra "Claude cambió", no
+  miente en silencio.
 - Detección de sesiones activas, waiting, errores, fin de tarea, permission pending.
 - Al pedir permiso, la cara + speech balloon muestran de cuál sesión (path corto
   del proyecto); aprobar aplica a esa sesión específica.
@@ -203,8 +207,9 @@ terminado el producto. No todos los proyectos tienen que llegar a la última fas
 evita comprometer scope antes de saber si se usa.
 
 **Alcance:**
-- Resolver A1 (TTS: probablemente Piper + onnxruntime local) y A2 (STT: Whisper
-  local vs API) con confidence score.
+- Spike de A1 (cerrada: Piper primario + `say` fallback, contrato
+  `TTSProvider → WAV`) — instalar Piper, generar WAV es_MX, medir latencia.
+  Resolver A2 (STT: Whisper local vs API) con confidence score.
 - **Audio por WiFi** (D2/R7), no BLE — comandos por BLE, audio por WiFi.
 - Botón B push-to-talk: captura mic → STT → Claude → respuesta hablada + resumen
   en pantalla.

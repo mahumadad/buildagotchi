@@ -256,6 +256,25 @@ state_sync, D16 safe mode, D17 error budget, D23 state_applied ack):
 
 ---
 
+## Smoke test Q4 — @abandonware/noble en macOS (M0, 2026-07-06)
+
+Corrido antes de Fase 0 (no requiere kit — solo el stack BLE de la Mac).
+
+- **Entorno**: Node v26.3.0, macOS Darwin 25.4.0 (Apple Silicon).
+- **Instalación**: `npm install @abandonware/noble` → OK (v1.9.2-26). El
+  binding nativo carga sin compilar (prebuilds via node-gyp-build). El
+  riesgo "no compila en Node moderno" **no se materializó**.
+- **Estado del adapter**: `noble.state` queda en `unknown` y `stateChange`
+  no dispara corriendo desde un shell no-interactivo — falta el permiso TCC
+  de Bluetooth para el proceso host. Esperado (Q1): el consent dialog
+  necesita sesión de usuario interactiva.
+- **Veredicto**: noble es viable como transport 1B. Pendiente para M6:
+  correr el scan desde la app con permiso Bluetooth concedido (Terminal o
+  el LaunchAgent) y verificar advertising real. El plan B (helper Swift/
+  CoreBluetooth) queda en reserva, no se activa.
+
+---
+
 ## Sorpresas y decisiones a revisar
 
 Todo lo que aparezca en Fase 0 que contradiga o refine algo de
