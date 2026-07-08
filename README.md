@@ -84,6 +84,23 @@ shipped as part of buildagotchi:
 Clone them under the same parent directory as this repo if you want the paths
 in the docs to line up.
 
+## External references (not cloned)
+
+Projects in the Claude Code ecosystem that solve adjacent problems. Audited for
+patterns and ideas — nothing is vendored or depended on, but they inform
+architectural decisions (D19 Claude detection strategy, A1 TTS choice) pending
+a deeper review before Phase 2:
+
+| Project | What we learned |
+|---|---|
+| [Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter) | Proven daemon → BLE → ESP32 pattern, Keychain OAuth access, Anthropic API usage polling. |
+| [ComandOS](https://github.com/0xAI-Builders/comandos) | Claude Code native hooks (`UserPromptSubmit`/`Stop`/`Notification`/`SessionEnd`), Piper TTS offline (`es_MX`). |
+| [ccboard](https://github.com/florianbruniaux/ccboard) | Hook injection into `settings.json`, file watcher with debounce, session state mapping. |
+| [claude-session-dashboard](https://github.com/dlupiak/claude-session-dashboard) | JSONL parsing of `~/.claude/projects/` for token metrics and session metadata. |
+| [claude-code-dashboard](https://github.com/ek33450505/claude-code-dashboard) | chokidar fs watcher + SSE transport + SQLite for session persistence. |
+| [claude-push](https://github.com/coa00/claude-push) | Minimal `PermissionRequest` hook → push notification via ntfy.sh. |
+| [claude-dashboard](https://github.com/uppinote20/claude-dashboard) | API response caching (60s TTL), token usage tracking. |
+
 ## Forking and contributing
 
 The project is developed for a single-user setup first, but the code is meant

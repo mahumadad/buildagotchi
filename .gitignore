@@ -3,8 +3,6 @@
 /StackChan/
 /StackChan-BSP/
 /claude-desktop-buddy/
-/claude-desktop-buddy-esp32/
-/claude-desktop-buddy-s3/
 
 # Secrets and local config (D25 — never commit)
 .env
