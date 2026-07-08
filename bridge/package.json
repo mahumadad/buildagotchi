@@ -19,7 +19,6 @@
     "format": "biome format --write src test"
   },
   "dependencies": {
-    "fastify": "^5.2.0",
     "pino": "^9.6.0",
     "uuid": "^11.0.0",
     "yaml": "^2.7.0",

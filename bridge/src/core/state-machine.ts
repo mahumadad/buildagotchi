@@ -5,9 +5,12 @@ import type { Event, ResolvedState, Severity } from './events.js';
 const logger = pino({ name: 'state-machine' });
 
 export interface StateRuleMatch {
-  source?: string;
-  category?: string;
-  severity?: Severity;
+  // `| undefined` (not just `?:`) so this structurally matches zod's inferred
+  // optional-field type under `exactOptionalPropertyTypes` (M4 index.ts wires
+  // `config.stateRules` straight from ConfigSchema's z.infer).
+  source?: string | undefined;
+  category?: string | undefined;
+  severity?: Severity | undefined;
 }
 
 export interface StateRule {
@@ -17,7 +20,7 @@ export interface StateRule {
 
 /** Minimal structural subset of the future server/metrics.ts Metrics registry (SA3, M4). */
 export interface MetricsLike {
-  counter(name: string): { inc(n?: number): void };
+  counter(name: string): { inc(labelValues?: Record<string, string>, n?: number): void };
 }
 
 export interface StateMachineDeps {

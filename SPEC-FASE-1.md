@@ -52,7 +52,7 @@ que cambiar una interfaz de 1A, es un bug de esta spec y se anota en NOTES.md.
 | Tests | Vitest | rápido, TS nativo |
 | Validación de schemas | Zod (config, Event, mensajes BLE) | una sola herramienta para los 3 contratos |
 | YAML | `yaml` | mantenido, sin deps |
-| HTTP server | Fastify | maduro, schema-friendly, liviano |
+| HTTP server | `node:http` nativo | 6 rutas, no justifica framework |
 | Dashboard front | HTML estático + vanilla JS + SSE | proyecto personal, cero build de front |
 | Logging | pino (JSON) — separado del Event Recorder | el log de app no es el recorder |
 | BLE (solo 1B) | `@abandonware/noble` detrás de `Transport` | **riesgo alto, smoke test en M0** (ver Q4) — si falla en macOS moderno, alternativa se evalúa sin tocar el resto |
@@ -94,7 +94,7 @@ bridge/
       recorder.ts        # ndjson append-only + rotación (D15)
       replay.ts          # replay de un log contra el bus
     server/
-      server.ts          # Fastify: dashboard, /metrics, /events, /health, SSE
+      server.ts          # node:http: /state, /metrics, /events, /health, SSE
       metrics.ts         # registro de métricas (D23, R8)
       public/            # dashboard estático
     platform/
@@ -434,8 +434,8 @@ la llegada del kit y la Fase 0.
 ## 17. Decisiones de esta spec (resumen S1.*)
 
 - **S1.1** — Fase partida en 1A (simulación, arrancable ya) / 1B (hardware).
-- **S1.2** — Stack: npm + Vitest + Zod + Fastify + pino + Biome; dashboard sin
-  framework; noble solo en 1B detrás de `Transport`.
+- **S1.2** — Stack: npm + Vitest + Zod + `node:http` + pino + Biome; dashboard
+  sin framework; noble solo en 1B detrás de `Transport`.
 - **S1.3** — Watchdog del AM = liveness del tick loop, no ausencia de emisiones.
 - **S1.4** — `POST /events` con token desde el día 1 (D26 literal); la asimetría
   con MCP `notify()` se resuelve en Fase 2.

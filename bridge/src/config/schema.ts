@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { parseDuration } from '../core/duration.js';
-import { EMOTIONS, SeveritySchema } from '../core/events.js';
+import { EMOTIONS, type Emotion, SeveritySchema } from '../core/events.js';
 
 /** Duration string ('30s', '2m', …) → ms. `infinite` is NOT legal here. */
 const Duration = z.string().transform((val, ctx) => {
@@ -41,7 +41,11 @@ const LedCommandSchema = z.object({
 });
 
 const ResolvedStatePartialSchema = z.object({
-  emotion: z.enum(EMOTIONS as [string, ...string[]]),
+  // Cast to a literal tuple (not `[string, ...string[]]`, M4 SPEC GAP fix) so
+  // the inferred type is `Emotion`, not a widened `string` — needed for this
+  // to assign into `StateRule.state.emotion: Emotion` when index.ts wires
+  // `config.stateRules` into the real StateMachine.
+  emotion: z.enum(EMOTIONS as [Emotion, ...Emotion[]]),
   decorators: z.array(z.string()).default([]),
   gaze: z.enum(['left', 'right', 'center']).optional(),
   leds: z.array(LedCommandSchema).default([]),

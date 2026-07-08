@@ -92,6 +92,21 @@ describe('EventRecorder', () => {
     expect(recent.map((l) => l.data.i)).toEqual([2, 3, 4]);
   });
 
+  it('setReplayMode(true) tags every recorded line with replay: true', async () => {
+    const dir = tmpDir();
+    recorder = new EventRecorder({ dir, retentionDays: 30 });
+    recorder.record(line());
+    recorder.setReplayMode(true);
+    recorder.record(line());
+    recorder.setReplayMode(false);
+    recorder.record(line());
+
+    const recent = recorder.recent(3);
+    expect(recent[0]?.replay).toBeUndefined();
+    expect(recent[1]?.replay).toBe(true);
+    expect(recent[2]?.replay).toBeUndefined();
+  });
+
   it('flushes the full file after close', async () => {
     const dir = tmpDir();
     recorder = new EventRecorder({ dir, retentionDays: 30 });

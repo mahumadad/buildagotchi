@@ -1,0 +1,186 @@
+import pino from 'pino';
+import { DemoAdapter } from './adapters/demo.js';
+import { parseArgs } from './cli.js';
+import { ConfigLoader } from './config/loader.js';
+import { AttentionManager } from './core/attention.js';
+import { EventBus } from './core/bus.js';
+import type { Adapter, Event } from './core/events.js';
+import { registerShutdown } from './core/lifecycle.js';
+import { StateMachine } from './core/state-machine.js';
+import { MacosPlatform } from './platform/macos.js';
+import type { RecorderContext } from './recorder/recorder.js';
+import { EventRecorder } from './recorder/recorder.js';
+import { Metrics } from './server/metrics.js';
+import { BridgeServer } from './server/server.js';
+
+const logger = pino({ name: 'bridge' });
+
+/**
+ * Composition root for `bridge run` (SPEC-IMPL-FASE-1A §5.7). Startup order:
+ * config → metrics → recorder → bus (recorder hook) → AM → state machine →
+ * transport → server → adapters → registerShutdown.
+ *
+ * SPEC GAP: §5.7 says "transport (M5; hasta entonces un stub que loguea)" —
+ * M5's real ProtocolSession/Transport already landed in this repo (built in
+ * parallel, per §7's "M4 y M5 ... pueden ejecutarse en paralelo"), but wiring
+ * it here is explicitly out of scope for this milestone's instructions. M4
+ * keeps the stub the spec describes; wiring the real BLE transport into
+ * index.ts is left for whichever milestone officially closes that
+ * integration.
+ */
+async function main(): Promise<void> {
+  const options = parseArgs(process.argv.slice(2));
+  if (options.command !== 'run') {
+    console.log(`${options.command}: not implemented in src/index.ts — see src/cli.ts`);
+    return;
+  }
+
+  const simulate = options.simulate || options.demo; // --demo implies --simulate
+
+  const metrics = new Metrics();
+  const platform = new MacosPlatform();
+
+  const configLoader = new ConfigLoader(options.configPath, { logger, metrics });
+  const config = configLoader.load();
+
+  const recorder = new EventRecorder({
+    dir: config.recorder.dir,
+    retentionDays: config.recorder.retentionDays,
+  });
+
+  const adapters: Adapter[] = [];
+
+  function recorderContext(): RecorderContext {
+    return {
+      metabolicScore: null, // Fase 1: sin Metabolic State
+      activeMode: attentionManager.getMode(),
+      bleHealthy: false, // stub transport (see SPEC GAP above): never connected
+      adapterHealth: Object.fromEntries(adapters.map((a) => [a.name, a.health().status])),
+    };
+  }
+
+  const bus = new EventBus(
+    { windowMs: config.dedup.windowSeconds * 1000, autoMuteAfter: config.dedup.autoMuteAfter },
+    {
+      onAccepted: (e: Event) => {
+        recorder.record({
+          line_type: 'event',
+          ts: e.timestamp,
+          context: recorderContext(),
+          data: e,
+        });
+        metrics.counter('events_total', ['source', 'category', 'severity']).inc({
+          source: e.source,
+          category: e.category,
+          severity: e.severity,
+        });
+        attentionManager.push(e);
+        server.notifyEvent(e);
+      },
+      onOutcome: (o) => {
+        if (o.kind === 'invalid') {
+          metrics.counter('parser_errors_total').inc();
+        }
+      },
+    },
+  );
+
+  const attentionManager = new AttentionManager(config.attentionManager, {
+    record: (type, data) => {
+      recorder.record({ line_type: type, ts: Date.now(), context: recorderContext(), data });
+    },
+    metrics,
+    onActiveChange: (active) => stateMachine.apply(active),
+  });
+  attentionManager.setMode(config.mode);
+
+  const stateMachine = new StateMachine(config.stateRules, {
+    emit: (state) => {
+      logger.info({ state }, '[stub transport] state'); // SPEC GAP: real transport wiring deferred, see above
+      server.notifyState(state);
+    },
+    record: (type, data) => {
+      recorder.record({ line_type: type, ts: Date.now(), context: recorderContext(), data });
+    },
+    metrics,
+  });
+
+  const server = new BridgeServer({
+    host: config.server.host,
+    port: config.server.port,
+    rateLimitPerMinute: config.external.rateLimitPerMinute,
+    requireToken: config.external.requireToken,
+    simulate,
+    logger,
+    metrics,
+    platform,
+    bus,
+    recorder,
+    attentionManager,
+    stateMachine,
+    getHealth: () => ({
+      adapters: Object.fromEntries(adapters.map((a) => [a.name, a.health()])),
+      transport: { kind: 'stub', connected: false, reconnects: 0, latency: { p50: 0, p95: 0 } },
+    }),
+  });
+
+  configLoader.watch((next) => {
+    bus.setDedupConfig({
+      windowMs: next.dedup.windowSeconds * 1000,
+      autoMuteAfter: next.dedup.autoMuteAfter,
+    });
+    attentionManager.setConfig(next.attentionManager);
+    stateMachine.setRules(next.stateRules);
+  });
+
+  attentionManager.start();
+  await server.start();
+  logger.info({ host: config.server.host, port: config.server.port }, 'bridge listening');
+
+  if (options.demo) {
+    const demo = new DemoAdapter({ attentionManager });
+    adapters.push(demo);
+    await demo.start(bus);
+  }
+
+  registerShutdown([
+    {
+      name: 'attention-manager',
+      run: async () => attentionManager.stop(),
+    },
+    {
+      name: 'adapters',
+      run: async () => {
+        for (const adapter of adapters) await adapter.stop();
+      },
+    },
+    {
+      name: 'incident-line',
+      run: async () => {
+        recorder.record({
+          line_type: 'incident',
+          ts: Date.now(),
+          context: recorderContext(),
+          data: { reason: 'shutdown' },
+        });
+      },
+    },
+    {
+      name: 'recorder',
+      run: async () => recorder.close(),
+    },
+    {
+      name: 'config-loader',
+      run: async () => configLoader.close(),
+    },
+    {
+      name: 'server',
+      run: async () => server.stop(),
+    },
+  ]);
+}
+
+main().catch((err) => {
+  logger.error({ err }, 'fatal error during startup');
+  process.exitCode = 1;
+});

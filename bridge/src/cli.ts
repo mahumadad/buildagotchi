@@ -1,3 +1,7 @@
+import { randomBytes } from 'node:crypto';
+import { MacosPlatform } from './platform/macos.js';
+import { type Platform, TOKEN_ACCOUNT, TOKEN_SERVICE } from './platform/platform.js';
+
 export interface CliOptions {
   command: 'run' | 'replay' | 'init';
   simulate: boolean; // --simulate
@@ -89,11 +93,52 @@ export function parseArgs(argv: string[]): CliOptions {
   return options;
 }
 
-function main(): void {
+/**
+ * `bridge init [--rotate]` (S1.7): generates the POST /events bearer token,
+ * stores it via the Platform's Keychain-backed secret store, and prints it
+ * exactly once with a ready-to-paste curl example. Without --rotate, an
+ * existing token is left untouched.
+ */
+export async function runInit(
+  opts: { rotate: boolean },
+  platform: Platform,
+  print: (line: string) => void = console.log,
+): Promise<void> {
+  const existing = await platform.getSecret(TOKEN_SERVICE, TOKEN_ACCOUNT);
+  if (existing && !opts.rotate) {
+    print('A token already exists. Use `bridge init --rotate` to regenerate it.');
+    return;
+  }
+
+  const token = randomBytes(32).toString('base64url');
+  await platform.setSecret(TOKEN_SERVICE, TOKEN_ACCOUNT, token);
+
+  print('Token generated and stored in the Keychain. It will not be shown again:');
+  print('');
+  print(`  ${token}`);
+  print('');
+  print('Example:');
+  print('');
+  print('  curl -X POST http://127.0.0.1:1780/events \\');
+  print(`    -H "Authorization: Bearer ${token}" \\`);
+  print('    -H "Content-Type: application/json" \\');
+  print(`    -d '{"source":"test","category":"demo","severity":"low"}'`);
+}
+
+async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+
+  if (options.command === 'init') {
+    await runInit({ rotate: options.rotate ?? false }, new MacosPlatform());
+    return;
+  }
+
   console.log(`${options.command}: not implemented yet`);
 }
 
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
-  main();
+  main().catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  });
 }

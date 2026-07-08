@@ -11,7 +11,10 @@ import { type Config, ConfigSchema } from './schema.js';
  * §2: nothing in a later milestone may force a refactor of an earlier one).
  */
 export interface MetricsLike {
-  counter(name: string): { inc(n?: number): void };
+  // `inc` takes an optional labelValues record ahead of n so this structurally
+  // matches server/metrics.ts's real Counter (M4 wires the real Metrics in
+  // here; the shape has to line up without changing this milestone's code).
+  counter(name: string): { inc(labelValues?: Record<string, string>, n?: number): void };
   histogram(name: string): { observe(ms: number): void };
 }
 

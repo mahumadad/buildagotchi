@@ -7,8 +7,11 @@ export interface ActiveAttention {
 }
 
 export interface TtlOverride {
-  source?: string;
-  category?: string;
+  // `| undefined` (not just `?:`) so this structurally matches zod's inferred
+  // optional-field type under `exactOptionalPropertyTypes` (M4 index.ts wires
+  // `config.attentionManager` straight from ConfigSchema's z.infer).
+  source?: string | undefined;
+  category?: string | undefined;
   ttl: number | null;
 }
 

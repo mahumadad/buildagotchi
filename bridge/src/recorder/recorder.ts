@@ -52,6 +52,7 @@ export class EventRecorder {
   #fd: number | null = null;
   #ring: RecorderLine[] = [];
   #ioErrors = 0;
+  #replayMode = false;
 
   constructor(opts: EventRecorderOptions) {
     this.#dir = expandHome(opts.dir);
@@ -61,7 +62,13 @@ export class EventRecorder {
     this.#applyRetention();
   }
 
-  record(line: RecorderLine): void {
+  /** Global flag (§5.5): while true, every recorded line is tagged replay: true. */
+  setReplayMode(enabled: boolean): void {
+    this.#replayMode = enabled;
+  }
+
+  record(rawLine: RecorderLine): void {
+    const line = this.#replayMode ? { ...rawLine, replay: true as const } : rawLine;
     this.#ring.push(line);
     if (this.#ring.length > RING_BUFFER_SIZE) {
       this.#ring.shift();

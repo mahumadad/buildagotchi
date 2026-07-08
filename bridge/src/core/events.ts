@@ -43,7 +43,8 @@ export const EMOTIONS: Emotion[] = [
 // Shape provisional (Q3, SPEC-FASE-1 §18): se cierra en 1B al ver el firmware stock.
 export interface LedCommand {
   row: 'left' | 'right';
-  index?: number;
+  // `| undefined` (not just `?:`), see ResolvedState above.
+  index?: number | undefined;
   color: string;
   pattern: string;
 }
@@ -51,11 +52,15 @@ export interface LedCommand {
 export interface ResolvedState {
   emotion: Emotion;
   decorators: string[];
-  gaze?: 'left' | 'right' | 'center';
+  // `| undefined` (not just `?:`) on the optional fields below so this
+  // structurally matches zod's inferred optional-field type under
+  // `exactOptionalPropertyTypes` (M4 index.ts wires `config.stateRules`
+  // straight from ConfigSchema's z.infer into StateRule.state).
+  gaze?: 'left' | 'right' | 'center' | undefined;
   leds: LedCommand[];
-  sound?: string;
-  servo?: { yaw?: number; pitch?: number };
-  balloon?: string;
+  sound?: string | undefined;
+  servo?: { yaw?: number | undefined; pitch?: number | undefined } | undefined;
+  balloon?: string | undefined;
 }
 
 export type AdapterHealth = 'HEALTHY' | 'DEGRADED' | 'BROKEN';
