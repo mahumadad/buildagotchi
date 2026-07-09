@@ -70,6 +70,25 @@ describe('parseArgs', () => {
     });
   });
 
+  it('parses init --hooks', () => {
+    expect(parseArgs(['init', '--hooks'])).toEqual({
+      command: 'init',
+      simulate: false,
+      demo: false,
+      configPath: './config.yaml',
+      hooks: true,
+    });
+  });
+
+  it('parses doctor', () => {
+    expect(parseArgs(['doctor'])).toEqual({
+      command: 'doctor',
+      simulate: false,
+      demo: false,
+      configPath: './config.yaml',
+    });
+  });
+
   it('throws on unknown flag', () => {
     expect(() => parseArgs(['--bogus'])).toThrow(/usage/i);
   });

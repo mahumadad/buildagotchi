@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto';
+import { runDoctor } from './hooks/doctor.js';
+import { installHooks } from './hooks/installer.js';
 import { MacosPlatform } from './platform/macos.js';
 import { type Platform, TOKEN_ACCOUNT, TOKEN_SERVICE } from './platform/platform.js';
 
 export interface CliOptions {
-  command: 'run' | 'replay' | 'init';
+  command: 'run' | 'replay' | 'init' | 'doctor';
   simulate: boolean; // --simulate
   demo: boolean; // --demo (M4; parsear ya)
   configPath: string; // --config <path>, default './config.yaml'
@@ -11,12 +13,14 @@ export interface CliOptions {
   replaySpeed?: number; // --speed N
   replayInstant?: boolean; // --instant
   rotate?: boolean; // bridge init --rotate
+  hooks?: boolean; // bridge init --hooks
 }
 
 const USAGE = `usage:
   bridge [run] [--simulate] [--demo] [--config <path>]
   bridge replay <file> [--speed N | --instant]
-  bridge init [--rotate]`;
+  bridge init [--rotate] [--hooks]
+  bridge doctor`;
 
 function usageError(detail: string): Error {
   return new Error(`${detail}\n\n${USAGE}`);
@@ -26,7 +30,7 @@ export function parseArgs(argv: string[]): CliOptions {
   const args = [...argv];
   let command: CliOptions['command'] = 'run';
 
-  if (args[0] === 'replay' || args[0] === 'init') {
+  if (args[0] === 'replay' || args[0] === 'init' || args[0] === 'doctor') {
     command = args[0];
     args.shift();
   } else if (args[0] === 'run') {
@@ -40,6 +44,7 @@ export function parseArgs(argv: string[]): CliOptions {
   let replaySpeed: number | undefined;
   let replayInstant = false;
   let rotate = false;
+  let hooks = false;
 
   if (command === 'replay') {
     const file = args.shift();
@@ -76,6 +81,9 @@ export function parseArgs(argv: string[]): CliOptions {
       case '--rotate':
         rotate = true;
         break;
+      case '--hooks':
+        hooks = true;
+        break;
       default:
         throw usageError(`unknown flag: ${arg}`);
     }
@@ -90,6 +98,7 @@ export function parseArgs(argv: string[]): CliOptions {
   if (replaySpeed !== undefined) options.replaySpeed = replaySpeed;
   if (replayInstant) options.replayInstant = replayInstant;
   if (rotate) options.rotate = rotate;
+  if (hooks) options.hooks = hooks;
   return options;
 }
 
@@ -130,6 +139,25 @@ async function main(): Promise<void> {
 
   if (options.command === 'init') {
     await runInit({ rotate: options.rotate ?? false }, new MacosPlatform());
+    if (options.hooks) {
+      const result = await installHooks({});
+      if (result.hooksInstalled || result.mcpInstalled) {
+        console.log(`Hooks installed. Script written to ${result.scriptPath}`);
+      } else {
+        console.log('Hooks already installed; nothing to do.');
+      }
+    }
+    return;
+  }
+
+  if (options.command === 'doctor') {
+    const checks = await runDoctor({ configPath: options.configPath });
+    for (const check of checks) {
+      console.log(`[${check.status}] ${check.name}: ${check.detail}`);
+    }
+    if (checks.some((c) => c.status === 'fail')) {
+      process.exitCode = 1;
+    }
     return;
   }
 
