@@ -1,0 +1,8 @@
+name: supervisor
+idleEmotion: NEUTRAL
+decoratorsBySeverity:
+  critical:
+    - angry_mark
+templates:
+  permission.pending: "Autorización requerida"
+  permission.critical: "⚠ {command}"

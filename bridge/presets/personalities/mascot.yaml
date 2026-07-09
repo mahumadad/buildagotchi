@@ -1,0 +1,6 @@
+name: mascot
+idleEmotion: HAPPY
+decoratorsBySeverity:
+  critical:
+    - sweat
+templates: {}

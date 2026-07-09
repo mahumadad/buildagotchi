@@ -1,4 +1,5 @@
 import pino from 'pino';
+import type { PersonalityManager } from '../personality/personality.js';
 import type { ActiveAttention } from './attention.js';
 import type { Event, ResolvedState, Severity } from './events.js';
 
@@ -52,12 +53,18 @@ export class StateMachine {
   #now: () => number;
   #criticalSamples: { ts: number; critical: boolean }[] = [];
   #lastSeverity: string | undefined = undefined;
+  #personality: PersonalityManager | null = null;
 
-  constructor(rules: StateRule[], deps: StateMachineDeps) {
+  constructor(rules: StateRule[], deps: StateMachineDeps, personality?: PersonalityManager) {
     this.#rules = rules;
     this.#deps = deps;
     this.#now = deps.now ?? Date.now;
+    this.#personality = personality ?? null;
     deps.metrics.gauge('time_in_critical_state_ratio', () => this.#criticalRatio());
+  }
+
+  setPersonality(p: PersonalityManager | null): void {
+    this.#personality = p;
   }
 
   setRules(rules: StateRule[]): void {
@@ -72,8 +79,15 @@ export class StateMachine {
     const isCritical = input !== null && input.event.severity === 'critical';
     this.#recordCriticalSample(isCritical);
     this.#lastSeverity = input?.event.severity;
-    const resolved = input ? this.#resolve(input.event) : BACKGROUND_MOOD;
+    const resolved = input ? this.#resolve(input.event) : this.#backgroundMood();
     this.#transition(resolved, input?.event.id);
+  }
+
+  #backgroundMood(): ResolvedState {
+    if (this.#personality) {
+      return { emotion: this.#personality.idleEmotion(), decorators: [], leds: [] };
+    }
+    return BACKGROUND_MOOD;
   }
 
   forceSafeState(): void {
@@ -105,6 +119,19 @@ export class StateMachine {
 
     if (e.direction !== undefined && state.gaze === undefined) {
       state = { ...state, gaze: e.direction };
+    }
+
+    if (this.#personality) {
+      const balloon = this.#personality.balloon(e.category, {
+        project: typeof e.payload.cwd === 'string' ? (e.payload.cwd.split('/').pop() ?? '') : '',
+        command: typeof e.payload.command === 'string' ? e.payload.command : '',
+        session: typeof e.payload.sessionId === 'string' ? e.payload.sessionId.slice(0, 8) : '',
+      });
+      if (balloon) state = { ...state, balloon };
+      const extraDecorators = this.#personality.decorators(e.severity);
+      if (extraDecorators.length > 0) {
+        state = { ...state, decorators: [...new Set([...state.decorators, ...extraDecorators])] };
+      }
     }
 
     return state;

@@ -1,0 +1,9 @@
+name: critic
+idleEmotion: DOUBTFUL
+decoratorsBySeverity:
+  critical:
+    - angry_mark
+    - sweat
+templates:
+  permission.pending: "¿Estás seguro?"
+  permission.critical: "Eso parece peligroso: {command}"

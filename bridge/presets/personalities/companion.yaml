@@ -1,0 +1,15 @@
+name: companion
+idleEmotion: NEUTRAL
+decoratorsBySeverity:
+  critical:
+    - angry_mark
+  high: []
+  medium: []
+  low: []
+  ambient: []
+templates:
+  permission.pending: "{project}: permiso pendiente"
+  permission.critical: "{project}: ⚠ {command}"
+  error: "algo salió mal"
+  session.new: "nueva sesión"
+  session.idle: "{project}: idle"
