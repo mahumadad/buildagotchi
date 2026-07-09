@@ -49,7 +49,10 @@ function makeStateMachine(): StateMachine {
   return new StateMachine([], {
     emit: () => {},
     record: () => {},
-    metrics: { counter: () => ({ inc: () => {} }) },
+    metrics: {
+      counter: () => ({ inc: () => {} }),
+      gauge: () => ({ set: () => {} }),
+    },
   });
 }
 

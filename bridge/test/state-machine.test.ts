@@ -3,11 +3,20 @@ import { newEvent } from '../src/core/events.js';
 import type { StateRule } from '../src/core/state-machine.js';
 import { StateMachine } from '../src/core/state-machine.js';
 
-function deps() {
+function deps(now?: () => number) {
+  const gauges = new Map<string, () => number>();
   return {
     emit: vi.fn(),
     record: vi.fn(),
-    metrics: { counter: () => ({ inc: vi.fn() }) },
+    metrics: {
+      counter: () => ({ inc: vi.fn() }),
+      gauge: (name: string, collect?: () => number) => {
+        if (collect) gauges.set(name, collect);
+        return { set: vi.fn() };
+      },
+    },
+    now,
+    _gauges: gauges,
   };
 }
 
@@ -116,5 +125,33 @@ describe('StateMachine', () => {
     const sm = new StateMachine(RULES, d);
     sm.apply(null);
     expect(sm.current()).toEqual({ emotion: 'NEUTRAL', decorators: [], leds: [] });
+  });
+
+  it('tracks time_in_critical_state_ratio over a moving window', () => {
+    let t = 1000;
+    const d = deps(() => t);
+    const sm = new StateMachine(RULES, d);
+    const collectRatio = d._gauges.get('time_in_critical_state_ratio');
+    expect(collectRatio).toBeDefined();
+
+    sm.apply({
+      event: newEvent({ source: 'x', category: 'y', severity: 'critical', payload: {} }),
+      deadline: null,
+    });
+    t += 1000;
+    sm.apply({
+      event: newEvent({ source: 'x', category: 'y', severity: 'low', payload: {} }),
+      deadline: null,
+    });
+    t += 1000;
+    sm.apply({
+      event: newEvent({ source: 'x', category: 'y', severity: 'low', payload: {} }),
+      deadline: null,
+    });
+    t += 1000;
+    sm.apply(null);
+
+    // 1 critical out of 4 samples = 0.25
+    expect(collectRatio?.()).toBeCloseTo(0.25);
   });
 });

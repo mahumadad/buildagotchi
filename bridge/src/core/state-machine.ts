@@ -21,15 +21,18 @@ export interface StateRule {
 /** Minimal structural subset of the future server/metrics.ts Metrics registry (SA3, M4). */
 export interface MetricsLike {
   counter(name: string): { inc(labelValues?: Record<string, string>, n?: number): void };
+  gauge(name: string, collect?: () => number): { set(v: number): void };
 }
 
 export interface StateMachineDeps {
   emit: (state: ResolvedState) => void;
   record: (type: 'state_change', data: Record<string, unknown>) => void;
   metrics: MetricsLike;
+  now?: () => number;
 }
 
 const BACKGROUND_MOOD: ResolvedState = { emotion: 'NEUTRAL', decorators: [], leds: [] };
+const CRITICAL_WINDOW_MS = 60 * 60 * 1000; // 60 min
 
 function matches(rule: StateRuleMatch, e: Event): boolean {
   if (rule.source !== undefined && rule.source !== e.source) return false;
@@ -46,10 +49,15 @@ export class StateMachine {
   #rules: StateRule[];
   #deps: StateMachineDeps;
   #current: ResolvedState = BACKGROUND_MOOD;
+  #now: () => number;
+  #criticalSamples: { ts: number; critical: boolean }[] = [];
+  #lastSeverity: string | undefined = undefined;
 
   constructor(rules: StateRule[], deps: StateMachineDeps) {
     this.#rules = rules;
     this.#deps = deps;
+    this.#now = deps.now ?? Date.now;
+    deps.metrics.gauge('time_in_critical_state_ratio', () => this.#criticalRatio());
   }
 
   setRules(rules: StateRule[]): void {
@@ -61,6 +69,9 @@ export class StateMachine {
   }
 
   apply(input: ActiveAttention | null): void {
+    const isCritical = input !== null && input.event.severity === 'critical';
+    this.#recordCriticalSample(isCritical);
+    this.#lastSeverity = input?.event.severity;
     const resolved = input ? this.#resolve(input.event) : BACKGROUND_MOOD;
     this.#transition(resolved, input?.event.id);
   }
@@ -97,6 +108,21 @@ export class StateMachine {
     }
 
     return state;
+  }
+
+  #recordCriticalSample(critical: boolean): void {
+    const now = this.#now();
+    this.#criticalSamples.push({ ts: now, critical });
+    const cutoff = now - CRITICAL_WINDOW_MS;
+    while (this.#criticalSamples.length > 0 && (this.#criticalSamples[0]?.ts ?? 0) < cutoff) {
+      this.#criticalSamples.shift();
+    }
+  }
+
+  #criticalRatio(): number {
+    if (this.#criticalSamples.length === 0) return 0;
+    const criticalCount = this.#criticalSamples.filter((s) => s.critical).length;
+    return criticalCount / this.#criticalSamples.length;
   }
 
   #transition(next: ResolvedState, eventId: string | undefined): void {

@@ -79,7 +79,7 @@ async function main(): Promise<void> {
       },
       onOutcome: (o) => {
         if (o.kind === 'invalid') {
-          metrics.counter('parser_errors_total').inc();
+          metrics.counter('bus_validation_errors_total').inc();
         }
       },
     },
@@ -155,6 +155,10 @@ async function main(): Promise<void> {
       },
     },
     {
+      name: 'server',
+      run: async () => server.stop(),
+    },
+    {
       name: 'incident-line',
       run: async () => {
         recorder.record({
@@ -172,10 +176,6 @@ async function main(): Promise<void> {
     {
       name: 'config-loader',
       run: async () => configLoader.close(),
-    },
-    {
-      name: 'server',
-      run: async () => server.stop(),
     },
   ]);
 }
