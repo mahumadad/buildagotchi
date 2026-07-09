@@ -1,7 +1,10 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
 import { z } from 'zod';
+import type { ClaudeAdapter } from '../adapters/claude-adapter.js';
 import type { AttentionManager } from '../core/attention.js';
 import type { EventBus } from '../core/bus.js';
 import {
@@ -52,6 +55,8 @@ export interface BridgeServerOptions {
   attentionManager: AttentionManager;
   stateMachine: StateMachine;
   getHealth: () => HealthPayload;
+  claudeAdapter?: ClaudeAdapter;
+  publicDir?: string;
 }
 
 const ExternalEventBodySchema = z
@@ -147,12 +152,14 @@ export class BridgeServer {
   #token: string | null = null;
   #warnedNoToken = false;
   #bucket: TokenBucket;
+  #hookBucket: TokenBucket;
   #sseClients = new Set<ServerResponse>();
   #sseKeepAlive: NodeJS.Timeout | null = null;
 
   constructor(opts: BridgeServerOptions) {
     this.#opts = opts;
     this.#bucket = new TokenBucket(opts.rateLimitPerMinute);
+    this.#hookBucket = new TokenBucket(120);
     // Registered up-front so /metrics exposes it at zero even before the first rejection.
     opts.metrics.counter('external_events_rejected_total', ['reason']);
     this.#server = createServer((req, res) => {
@@ -201,7 +208,11 @@ export class BridgeServer {
     this.#broadcast('health', health);
   }
 
-  #broadcast(type: 'state' | 'event' | 'health', payload: unknown): void {
+  notifySession(sessions: unknown): void {
+    this.#broadcast('session', sessions);
+  }
+
+  #broadcast(type: 'state' | 'event' | 'health' | 'session', payload: unknown): void {
     const line = `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
     for (const client of this.#sseClients) client.write(line);
   }
@@ -217,6 +228,12 @@ export class BridgeServer {
     if (method === 'GET' && path === '/stream') return this.#handleStream(res);
     if (method === 'GET' && path === '/metrics') return this.#handleMetrics(res);
     if (method === 'POST' && path === '/events') return this.#handlePostEvent(req, res);
+    if (method === 'POST' && path === '/hooks/claude') return this.#handleHookClaude(req, res);
+    if (method === 'POST' && path.startsWith('/approve/')) {
+      return this.#handleApprove(req, res, path);
+    }
+    if (method === 'GET' && path === '/') return this.#serveStatic('/index.html', res);
+    if (method === 'GET' && this.#isStaticPath(path)) return this.#serveStatic(path, res);
 
     sendJson(res, 404, { error: 'not found' });
   }
@@ -332,6 +349,107 @@ export class BridgeServer {
     }
 
     sendJson(res, 202, { id: event.id, outcome });
+  }
+
+  async #handleHookClaude(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.#opts.claudeAdapter) {
+      sendJson(res, 404, { error: 'claude adapter not configured' });
+      return;
+    }
+    if (!this.#hookBucket.tryTake()) {
+      sendJson(res, 429, { error: 'rate limit exceeded' });
+      return;
+    }
+    const body = await readBody(req, MAX_BODY_BYTES);
+    if (!body.ok) {
+      sendJson(res, 413, { error: 'payload too large' });
+      return;
+    }
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body.data);
+    } catch {
+      sendJson(res, 400, { error: 'invalid JSON' });
+      return;
+    }
+    if (typeof parsed.hook_event_name !== 'string' || typeof parsed.session_id !== 'string') {
+      sendJson(res, 400, { error: 'missing hook_event_name or session_id' });
+      return;
+    }
+    this.#opts.claudeAdapter.handleHookEvent(parsed);
+    sendJson(res, 202, { ok: true });
+  }
+
+  async #handleApprove(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    const authError = this.#checkAuth(req);
+    if (authError && !this.#opts.simulate) {
+      sendJson(res, authError.status, authError.body);
+      return;
+    }
+    if (!this.#opts.claudeAdapter) {
+      sendJson(res, 404, { error: 'claude adapter not configured' });
+      return;
+    }
+    const sessionId = path.slice('/approve/'.length);
+    if (!sessionId) {
+      sendJson(res, 400, { error: 'missing session ID' });
+      return;
+    }
+    const body = await readBody(req, MAX_BODY_BYTES);
+    if (!body.ok) {
+      sendJson(res, 413, { error: 'payload too large' });
+      return;
+    }
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body.data);
+    } catch {
+      sendJson(res, 400, { error: 'invalid JSON' });
+      return;
+    }
+    const action = parsed.action;
+    if (action !== 'approve' && action !== 'deny') {
+      sendJson(res, 400, { error: 'action must be approve or deny' });
+      return;
+    }
+    const mapped = action === 'approve' ? 'approved' : 'denied';
+    const resolved = this.#opts.claudeAdapter.resolvePermission(sessionId, mapped);
+    if (resolved) {
+      sendJson(res, 200, { resolved: true });
+    } else {
+      sendJson(res, 404, { error: 'no pending permission' });
+    }
+  }
+
+  #isStaticPath(path: string): boolean {
+    return /^\/([\w-]+\.(?:html|css|js))$/.test(path);
+  }
+
+  #serveStatic(path: string, res: ServerResponse): void {
+    if (!this.#opts.publicDir) {
+      sendJson(res, 404, { error: 'not found' });
+      return;
+    }
+    const filename = path === '/' ? 'index.html' : path.slice(1);
+    if (filename.includes('..') || filename.includes('/')) {
+      sendJson(res, 404, { error: 'not found' });
+      return;
+    }
+    const filePath = join(this.#opts.publicDir, filename);
+    if (!existsSync(filePath)) {
+      sendJson(res, 404, { error: 'not found' });
+      return;
+    }
+    const contentTypes: Record<string, string> = {
+      html: 'text/html; charset=utf-8',
+      css: 'text/css; charset=utf-8',
+      js: 'text/javascript; charset=utf-8',
+    };
+    const ext = filename.split('.').pop() ?? '';
+    const contentType = contentTypes[ext] ?? 'application/octet-stream';
+    const content = readFileSync(filePath, 'utf-8');
+    res.writeHead(200, { 'content-type': contentType, 'cache-control': 'no-cache' });
+    res.end(content);
   }
 
   #checkAuth(req: IncomingMessage): { status: 401 | 503; body: unknown } | null {

@@ -1,0 +1,233 @@
+:root {
+  --bg: #f5f5f7;
+  --fg: #1a1a1a;
+  --panel-bg: #ffffff;
+  --border: #dcdcdc;
+  --muted: #6b6b6b;
+  --sev-critical: #d92d20;
+  --sev-high: #ef6820;
+  --sev-medium: #d9a406;
+  --sev-low: #808080;
+  --sev-ambient: #5b7f9c;
+  --health-good: #16a34a;
+  --health-warn: #d9a406;
+  --health-bad: #d92d20;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181a;
+    --fg: #eaeaea;
+    --panel-bg: #232427;
+    --border: #3a3b3e;
+    --muted: #a0a0a0;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header h1 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.conn-status {
+  font-size: 0.8rem;
+  color: var(--muted);
+  padding: 0.2rem 0.6rem;
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+}
+
+.conn-status[data-state="open"] {
+  color: var(--health-good);
+  border-color: var(--health-good);
+}
+
+.conn-status[data-state="closed"] {
+  color: var(--health-bad);
+  border-color: var(--health-bad);
+}
+
+.app-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+@media (min-width: 720px) {
+  .app-grid {
+    grid-template-columns: 260px 1fr;
+  }
+}
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+}
+
+.face-panel {
+  text-align: center;
+}
+
+.face {
+  font-size: 4rem;
+  line-height: 1;
+}
+
+.state-mode {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.health-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.health-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+.health-transport {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.75rem;
+  background: var(--health-warn);
+  color: #fff;
+}
+
+.badge[data-status="HEALTHY"] {
+  background: var(--health-good);
+}
+
+.badge[data-status="DEGRADED"] {
+  background: var(--health-warn);
+}
+
+.badge[data-status="BROKEN"] {
+  background: var(--health-bad);
+}
+
+.sessions-list,
+.events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.events-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.session-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  padding: 0.6rem 0.8rem;
+}
+
+.session-card.permission_pending {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(217, 45, 32, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(217, 45, 32, 0.15);
+  }
+}
+
+.session-actions button {
+  margin-left: 0.4rem;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--fg);
+  border-radius: 0.3rem;
+  padding: 0.25rem 0.6rem;
+}
+
+.event-item {
+  border-left: 3px solid var(--sev-ambient);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  border-radius: 0.2rem;
+  background: var(--bg);
+}
+
+.event-item[data-severity="critical"] {
+  border-left-color: var(--sev-critical);
+}
+
+.event-item[data-severity="high"] {
+  border-left-color: var(--sev-high);
+}
+
+.event-item[data-severity="medium"] {
+  border-left-color: var(--sev-medium);
+}
+
+.event-item[data-severity="low"] {
+  border-left-color: var(--sev-low);
+}
+
+.event-item[data-severity="ambient"] {
+  border-left-color: var(--sev-ambient);
+}

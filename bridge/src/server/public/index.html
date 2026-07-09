@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Buildagotchi Bridge</title>
+    <link rel="stylesheet" href="/dashboard.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Buildagotchi Bridge</h1>
+      <span id="conn-status" class="conn-status" data-state="connecting">connecting…</span>
+    </header>
+    <main class="app-grid">
+      <aside class="sidebar">
+        <section class="panel face-panel">
+          <div id="face" class="face" aria-live="polite">😐</div>
+          <div id="state-mode" class="state-mode">NORMAL</div>
+        </section>
+        <section class="panel health-panel">
+          <h2>Health</h2>
+          <div id="health-adapters" class="health-list"></div>
+          <div class="health-transport">
+            <span>Transport:</span>
+            <span id="health-transport-status" class="badge">unknown</span>
+          </div>
+        </section>
+      </aside>
+      <section class="content">
+        <section class="panel sessions-panel">
+          <h2>Claude sessions</h2>
+          <div id="sessions-list" class="sessions-list">
+            <p class="empty">No sessions yet.</p>
+          </div>
+        </section>
+        <section class="panel events-panel">
+          <h2>Events</h2>
+          <ul id="events-list" class="events-list"></ul>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="/dashboard.js"></script>
+  </body>
+</html>

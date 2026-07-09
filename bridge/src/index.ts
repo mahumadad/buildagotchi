@@ -1,4 +1,6 @@
+import { join } from 'node:path';
 import pino from 'pino';
+import { ClaudeAdapter } from './adapters/claude-adapter.js';
 import { DemoAdapter } from './adapters/demo.js';
 import { parseArgs } from './cli.js';
 import { ConfigLoader } from './config/loader.js';
@@ -105,6 +107,22 @@ async function main(): Promise<void> {
     metrics,
   });
 
+  const claudeAdapter = new ClaudeAdapter(
+    {
+      staleSessionTimeoutMs: 1_800_000,
+      transcriptReadEnabled: true,
+      unknownLineThreshold: 5,
+      unknownLineBrokenThreshold: 20,
+    },
+    {
+      logger,
+      metrics,
+      criticalCommands: config.criticalCommands,
+      stateDir: join(platform.dataDir(), 'claude-state'),
+    },
+  );
+  adapters.push(claudeAdapter);
+
   const server = new BridgeServer({
     host: config.server.host,
     port: config.server.port,
@@ -118,6 +136,8 @@ async function main(): Promise<void> {
     recorder,
     attentionManager,
     stateMachine,
+    claudeAdapter,
+    publicDir: join(import.meta.dirname, 'server', 'public'),
     getHealth: () => ({
       adapters: Object.fromEntries(adapters.map((a) => [a.name, a.health()])),
       transport: { kind: 'stub', connected: false, reconnects: 0, latency: { p50: 0, p95: 0 } },
@@ -136,6 +156,11 @@ async function main(): Promise<void> {
   attentionManager.start();
   await server.start();
   logger.info({ host: config.server.host, port: config.server.port }, 'bridge listening');
+
+  await claudeAdapter.start(bus);
+  claudeAdapter.onSessionChangeCallback = (sessions) => {
+    server.notifySession(Object.fromEntries(sessions));
+  };
 
   if (options.demo) {
     const demo = new DemoAdapter({ attentionManager });
