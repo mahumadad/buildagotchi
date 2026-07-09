@@ -139,23 +139,33 @@ export class ClaudeAdapter implements Adapter {
 
 1. Validar `hook_event_name` y `session_id` presentes; skip si faltan + warn.
 2. Crear sesión si no existe (`session_id` nuevo); actualizar `lastEventAt`.
-3. Según `hook_event_name`:
+3. Según `hook_event_name` (nombres y campos verificados contra código de
+   terceros + docs oficiales — ver §9 Referencias auditadas, SA19):
    - `UserPromptSubmit`: session.state = `'working'`. Emitir evento
      `{source:'claude', category:'prompt', severity:'ambient',
      payload:{sessionId, cwd}}`.
-   - `Stop`: si `transcript_path` presente y `transcriptReadEnabled` →
-     `readTranscriptTail()` para enriquecer. session.state = `'idle'`.
-     Emitir `{source:'claude', category:'response', severity:'ambient',
+   - `Stop`: el texto final viene en `payload.last_assistant_message` (no hace
+     falta leer el transcript para el texto). Solo si `transcript_path` presente
+     y `transcriptReadEnabled` → `readTranscriptTail()` para el conteo de tokens
+     (el payload no lo trae). session.state = `'idle'`. Emitir
+     `{source:'claude', category:'response', severity:'ambient',
      payload:{sessionId, cwd, tokens?, text?}}`.
-   - `Notification`: leer `type` del payload. Si `'permission'` →
+   - `SessionEnd`: borrar la sesión del map. Señal correcta de fin de sesión
+     (reemplaza depender solo del stale-timeout).
+   - `Notification`: leer **`notification_type`** (NO `type`). Si
+     `=== 'permission_prompt'` (NO `'permission'`) →
      session.state = `'permission_pending'`, leer transcript para comando,
      check `criticalCommands` → `isCritical`. Emitir
      `{source:'claude', category:'permission', severity:'critical',
      payload:{sessionId, cwd, command?, isCritical}}`.
-     Si otro type → emitir como `{category:'notification', severity:'low'}`.
+     Otro `notification_type` → emitir `{category:'notification', severity:'low'}`.
    - `SubagentStop`: emitir `{category:'subagent', severity:'ambient'}`.
 4. Incrementar `claude_hook_events_total{hook_event}`.
 5. Broadcast SSE `session`.
+
+> **Estado M6: IMPLEMENTADO.** Los bugs B1 (campo `notification_type`), B2/B3
+> (paths del transcript) detectados en la auditoría (§9) ya están corregidos en
+> el código. 21 tests verdes.
 
 **`readTranscriptTail(path, lines=50): TranscriptEnrichment | null`**
 
@@ -171,7 +181,15 @@ interface TranscriptEnrichment {
 - `readFileSync` de las últimas `lines` líneas (seek al final, leer hacia
   atrás hasta tener suficientes `\n`).
 - Parsear cada línea como JSON. Línea no-JSON → skip + count unknown.
-- Extraer campos conocidos del schema de transcript de Claude Code.
+- **Estructura real del transcript en disco** (formato anidado de Anthropic,
+  verificado contra ccboard y claude-session-dashboard — §9): cada línea es
+  `{type, message:{content:[...blocks], usage:{...}}}`. Extraer solo de líneas
+  con `type === 'assistant'`:
+  - `text`: bloque de `message.content[]` con `type:'text'` → `.text`.
+  - `command`: bloque de `message.content[]` con `type:'tool_use'` →
+    `.input.command` (plano en el bloque; NO hay wrapper `tool`).
+  - `tokens`: `message.usage.output_tokens` (anidado bajo `message`, NO
+    top-level).
 - Crash → return `null` + warn. Nunca tira.
 
 **Health computation:**
@@ -295,6 +313,12 @@ export function generateHookScript(bridgeUrl: string): string;
 1. Leer `~/.claude/settings.json` (crear si no existe con `{}`).
 2. Parsear JSON. Si tiene `hooks`, merge con los nuevos (no pisar hooks
    existentes de otras tools). Si no tiene `hooks`, agregar sección completa.
+   **Dedupe idempotente (SA21, patrón de claude-push §9)**: por cada evento,
+   antes de agregar nuestra entrada filtrar cualquier entrada existente cuyo
+   `command` contenga `buildagotchi` — así reinstalar no acumula hooks
+   duplicados. Los `hook_event_name` a registrar: `UserPromptSubmit`, `Stop`,
+   `SessionEnd`, `Notification`, `SubagentStop`. Forma de cada entrada:
+   `{matcher: '', hooks: [{type:'command', command: '<script>', timeout: 5}]}`.
 3. Agregar `mcpServers.buildagotchi` si no existe.
 4. Calcular diff legible (líneas +/-).
 5. Si `dryRun` → devolver diff sin escribir.
@@ -599,16 +623,26 @@ que hacen POST. Si `token === null`, las tools loguean warn y devuelven error
 al caller MCP — las resources siguen funcionando (GET /state y /health son
 públicos).
 
+> **SA20 (auditoría §9): usar `registerTool()`/`registerResource()`, NO
+> `tool()`/`resource()`.** `server.tool()` y `server.resource()` están
+> **deprecados** en `@modelcontextprotocol/sdk` (verificado en el `.d.ts` de
+> 1.29.0; stackchan-codex-bridge ya usa `registerTool`). La firma nueva envuelve
+> el schema: `registerTool(name, {title, description, inputSchema}, handler)`.
+
 **Tools:**
 
 ```ts
 // notify — empuja evento al pipeline
-server.tool('notify', {
-  source: z.string().describe('Event source identifier'),
-  severity: z.enum(['critical', 'high', 'medium', 'low', 'ambient']),
-  category: z.string().describe('Event category'),
-  message: z.string().describe('Human-readable message'),
-  ttlMs: z.number().optional().describe('Time-to-live in milliseconds'),
+server.registerTool('notify', {
+  title: 'Notify',
+  description: 'Push an event into the buildagotchi pipeline',
+  inputSchema: {
+    source: z.string().describe('Event source identifier'),
+    severity: z.enum(['critical', 'high', 'medium', 'low', 'ambient']),
+    category: z.string().describe('Event category'),
+    message: z.string().describe('Human-readable message'),
+    ttlMs: z.number().optional().describe('Time-to-live in milliseconds'),
+  },
 }, async (input) => {
   const res = await fetch(`${bridgeUrl}/events`, {
     method: 'POST',
@@ -629,10 +663,14 @@ server.tool('notify', {
 
 // set_face — cara temporal via POST /events (SA13b, S2.6)
 // NO endpoint /face — reutiliza /events con source:'mcp:set_face'.
-server.tool('set_face', {
-  emotion: z.enum(['NEUTRAL','HAPPY','SAD','ANGRY','SLEEPY','DOUBTFUL','COLD','HOT']),
-  ttlMs: z.number().default(5000).describe('Duration in ms'),
-  balloon: z.string().optional().describe('Speech balloon text'),
+server.registerTool('set_face', {
+  title: 'Set face',
+  description: 'Temporarily override the avatar emotion',
+  inputSchema: {
+    emotion: z.enum(['NEUTRAL','HAPPY','SAD','ANGRY','SLEEPY','DOUBTFUL','COLD','HOT']),
+    ttlMs: z.number().default(5000).describe('Duration in ms'),
+    balloon: z.string().optional().describe('Speech balloon text'),
+  },
 }, async (input) => {
   const res = await fetch(`${bridgeUrl}/events`, {
     method: 'POST',
@@ -652,9 +690,13 @@ server.tool('set_face', {
 });
 
 // approve_permission — aprobar/denegar permiso
-server.tool('approve_permission', {
-  sessionId: z.string().describe('Claude session ID'),
-  action: z.enum(['approve', 'deny']),
+server.registerTool('approve_permission', {
+  title: 'Approve permission',
+  description: 'Approve or deny a pending Claude permission',
+  inputSchema: {
+    sessionId: z.string().describe('Claude session ID'),
+    action: z.enum(['approve', 'deny']),
+  },
 }, async (input) => {
   const res = await fetch(`${bridgeUrl}/approve/${input.sessionId}`, {
     method: 'POST',
@@ -672,17 +714,27 @@ server.tool('approve_permission', {
 **Resources:**
 
 ```ts
-server.resource('state/current', 'buildagotchi://state/current', async () => {
-  const res = await fetch(`${bridgeUrl}/state`);
-  const data = await res.json();
-  return { contents: [{ uri: 'buildagotchi://state/current', text: JSON.stringify(data) }] };
-});
+server.registerResource(
+  'state/current',
+  'buildagotchi://state/current',
+  { title: 'Current state', mimeType: 'application/json' },
+  async (uri) => {
+    const res = await fetch(`${bridgeUrl}/state`);
+    const data = await res.json();
+    return { contents: [{ uri: uri.href, text: JSON.stringify(data) }] };
+  },
+);
 
-server.resource('health', 'buildagotchi://health', async () => {
-  const res = await fetch(`${bridgeUrl}/health`);
-  const data = await res.json();
-  return { contents: [{ uri: 'buildagotchi://health', text: JSON.stringify(data) }] };
-});
+server.registerResource(
+  'health',
+  'buildagotchi://health',
+  { title: 'Health', mimeType: 'application/json' },
+  async (uri) => {
+    const res = await fetch(`${bridgeUrl}/health`);
+    const data = await res.json();
+    return { contents: [{ uri: uri.href, text: JSON.stringify(data) }] };
+  },
+);
 ```
 
 ### 4.2 `src/mcp.ts` — entry point
@@ -1130,3 +1182,78 @@ M6).
 | M9 | `src/mcp/server.ts`, `src/mcp.ts`, `test/mcp-server.test.ts` | `package.json` (add @modelcontextprotocol/sdk), `src/core/state-machine.ts` (mcp:set_face override) |
 | M10 | `src/personality/personality.ts`, `src/personality/loader.ts`, `presets/personalities/companion.yaml`, `presets/personalities/supervisor.yaml`, `presets/personalities/mascot.yaml`, `presets/personalities/critic.yaml`, `test/personality.test.ts` | `src/core/state-machine.ts` |
 | M11 | `test/integration-fase2.test.ts` | `src/config/schema.ts`, `src/index.ts`, `src/cli.ts`, `config.example.yaml` |
+
+> **Conflicto M9↔M10 en `state-machine.ts`**: ambos tocan `#resolve()`. Ejecutar
+> **M10 primero** (personality: balloon, decorators, idleEmotion) y **M9 después**
+> agrega su bloque `mcp:set_face` *después* de la lógica de personality (el
+> override explícito debe ganar). `forceSafeState()` siempre va a NEUTRAL
+> (safe state literal, no respeta preset).
+
+---
+
+## 9. Referencias auditadas (SA19)
+
+Auditoría de los repos de referencia (memoria `reference-buildagotchi-ecosystem`)
+contra la implementación de M6 y el plan M7-M11. Documenta **cómo resolvieron**
+los puntos que antes quedaban implícitos. Evidencia = código verificado, no README.
+
+### Contrato de hooks de Claude Code
+
+| Punto | Resolución | Fuente |
+|---|---|---|
+| Nombres de evento | `UserPromptSubmit`, `Stop`, `SessionStart`, `SessionEnd`, `Notification`, `PreToolUse`, `PostToolUse`, `SubagentStart`, `SubagentStop`, `PreCompact`, `PermissionRequest` (+más) son reales. `SubagentStop` confirmado → **C3 resuelto**. | docs oficiales + ccboard `hook_event.rs` |
+| Permission | **`notification_type === 'permission_prompt'`** (NO `type === 'permission'`). Corrige bug B1 en M6. ComandOS además hace fallback grepeando `.message` por `"permi"`. | ccboard `hook_event.rs` (con unit tests) + docs |
+| Texto final del turno | `Stop` trae `last_assistant_message` en el payload → no hace falta leer transcript para el texto. | docs oficiales |
+| Fin de sesión | Evento `SessionEnd` (ComandOS/ccboard lo manejan) — señal correcta vs. depender del stale-timeout. | ComandOS `cc-notify.sh`, ccboard settings |
+| Inyección en settings.json | Forma `{matcher, hooks:[{type:'command', command, timeout}]}`. Dedupe: filtrar entradas cuyo `command` matchee el propio nombre antes de append (jq pipeline). | claude-push `install.sh`, ccboard settings |
+| Hook `type:'http'` | Existe, pero **no lo adoptamos**: perdería el fallback local (SA17, escribir state file si el bridge está caído). Mantener bash+curl+fallback. | docs oficiales |
+| Approve/deny real | Posible vía `PreToolUse`/`PermissionRequest` con respuesta síncrona bloqueante (claude-push lo hace con timeout SSE 90s). **Fuera de scope Fase 2** — reabre C2 del council para fase futura. | docs + claude-push `claude-push.sh` |
+
+### Formato del transcript JSONL (en disco, `~/.claude/projects/*.jsonl`)
+
+Formato **anidado de Anthropic** confirmado por dos parsers independientes en
+producción. Corrige bugs B2/B3 en M6:
+
+```jsonc
+{"type":"assistant","message":{
+  "content":[
+    {"type":"text","text":"..."},
+    {"type":"tool_use","name":"Bash","input":{"command":"..."}}
+  ],
+  "usage":{"input_tokens":100,"output_tokens":250,
+           "cache_read_input_tokens":0,"cache_creation_input_tokens":0}
+}}
+```
+
+- `text`: `message.content[]` con `type:'text'` → `.text` ✓ (ya era correcto).
+- `command`: bloque `message.content[]` con `type:'tool_use'` → `.input.command`
+  (plano, sin wrapper `tool`). **B2 corregido.**
+- `tokens`: `message.usage.output_tokens` (anidado bajo `message`). **B3 corregido.**
+- Gotcha no adoptado (fuera de scope): tokens de subagentes viven en
+  `<sessionDir>/subagents/*.jsonl` — sumarlos si algún día importa el total real.
+
+Fuentes: ccboard `session-stop.sh` (jq), claude-session-dashboard `parsers/`,
+claude-code-dashboard `parsers/sessions.ts`.
+
+### SSE / dashboard (M8)
+
+Nuestro diseño push-based validado: frames JSON con discriminador `type` +
+reconexión plana `setTimeout(connect, 3000)` en `EventSource.onerror` es
+exactamente el patrón probado de claude-code-dashboard `useLive.ts`. Al recibir
+hooks (push) nos ahorramos toda la maquinaria chokidar + idle-timers +
+staleness-sweep que ese repo necesita por no tener señales de hooks.
+
+### MCP (M9)
+
+| Punto | Resolución | Fuente |
+|---|---|---|
+| API del SDK | `registerTool()`/`registerResource()`; `tool()`/`resource()` **deprecados**. Ver SA20. | `@modelcontextprotocol/sdk@1.29.0` `.d.ts`, stackchan-codex-bridge |
+| Transport | `StdioServerTransport` correcto para nosotros (Claude Code nos lanza como child stdio). codex-bridge usa `StreamableHTTPServerTransport` solo porque necesita multi-cliente remoto. | stackchan-codex-bridge `src/server.js` |
+| Proceso separado | Confirmado: codex-bridge separa concerns por proceso/puerto. Nuestro MCP como proceso aparte (HTTP al bridge) es la decisión correcta. | stackchan-codex-bridge |
+| Catálogo de tools | kisaragi-mochi/stackchan-mcp expone 20+ tools de device (servos, LEDs, TTS/STT, cámara). Nuestro scope es más angosto por diseño (notify/approval bridge); sin cambios. | kisaragi-mochi/stackchan-mcp README |
+
+### Decisiones de implementación nuevas de esta auditoría
+
+- **SA19**: esta sección — documentar cómo resolvieron las referencias.
+- **SA20**: MCP usa `registerTool()`/`registerResource()` (API no deprecada).
+- **SA21**: inyección de hooks idempotente con dedupe por `command` (claude-push).

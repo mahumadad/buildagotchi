@@ -71,13 +71,15 @@ archivos.
 | Hook event | Lo que el adapter hace |
 |---|---|
 | `UserPromptSubmit` | Crear/actualizar sesión → estado `working` |
-| `Stop` | Lectura one-shot del transcript → extraer respuesta, tokens. Estado `idle` |
-| `Notification` | Clasificar: si `type === 'permission'` → evento `permission` critical; si `type === 'progress'` → evento `progress` ambient |
+| `Stop` | Respuesta desde `last_assistant_message` del payload; transcript one-shot solo para tokens. Estado `idle` |
+| `Notification` | Si `notification_type === 'permission_prompt'` → evento `permission` critical; otro tipo → `notification` low |
+| `SessionEnd` | Borrar la sesión del tracking |
 | `SubagentStop` | Actualizar tracking de sesión (subagente terminó) |
 
-**Nota**: `SessionStart` y `SessionEnd` no son hooks de Claude Code — el
-adapter infiere inicio de sesión del primer evento de cada `session_id`, y fin
-por inactividad configurable o por un `Stop` final.
+**Nota**: nombres de evento y campos verificados en auditoría de referencias
+(SPEC-IMPL-FASE-2 §9). `SessionEnd` **sí** es un hook real de Claude Code y es
+la señal correcta de fin de sesión; el stale-timeout queda como red de
+seguridad para sesiones que mueren sin emitirlo.
 
 ```ts
 interface ClaudeSession {
@@ -541,7 +543,7 @@ Dashboard (browser)
 ## 6. Permission flow detallado (D6)
 
 ```
-Notification hook (type=permission)
+Notification hook (notification_type=permission_prompt)
     │
     ▼
 ClaudeAdapter.handleHookEvent()
