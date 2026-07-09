@@ -1,7 +1,7 @@
 import pino from 'pino';
 import type { PersonalityManager } from '../personality/personality.js';
 import type { ActiveAttention } from './attention.js';
-import type { Event, ResolvedState, Severity } from './events.js';
+import type { Emotion, Event, ResolvedState, Severity } from './events.js';
 
 const logger = pino({ name: 'state-machine' });
 
@@ -131,6 +131,14 @@ export class StateMachine {
       const extraDecorators = this.#personality.decorators(e.severity);
       if (extraDecorators.length > 0) {
         state = { ...state, decorators: [...new Set([...state.decorators, ...extraDecorators])] };
+      }
+    }
+
+    // mcp:set_face override — explicit emotion takes precedence over rules and personality
+    if (e.source === 'mcp:set_face' && typeof e.payload.emotion === 'string') {
+      state = { ...state, emotion: e.payload.emotion as Emotion };
+      if (typeof e.payload.balloon === 'string') {
+        state = { ...state, balloon: e.payload.balloon };
       }
     }
 

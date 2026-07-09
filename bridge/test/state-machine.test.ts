@@ -154,4 +154,31 @@ describe('StateMachine', () => {
     // 1 critical out of 4 samples = 0.25
     expect(collectRatio?.()).toBeCloseTo(0.25);
   });
+
+  it('mcp:set_face overrides resolved emotion', () => {
+    const d = deps();
+    const sm = new StateMachine(RULES, d);
+    const e = newEvent({
+      source: 'mcp:set_face',
+      category: 'set_face',
+      severity: 'high',
+      payload: { emotion: 'HAPPY' },
+    });
+    sm.apply({ event: e, deadline: null });
+    expect(sm.current().emotion).toBe('HAPPY');
+  });
+
+  it('mcp:set_face with balloon sets balloon', () => {
+    const d = deps();
+    const sm = new StateMachine(RULES, d);
+    const e = newEvent({
+      source: 'mcp:set_face',
+      category: 'set_face',
+      severity: 'high',
+      payload: { emotion: 'SAD', balloon: 'oops' },
+    });
+    sm.apply({ event: e, deadline: null });
+    expect(sm.current().emotion).toBe('SAD');
+    expect(sm.current().balloon).toBe('oops');
+  });
 });
