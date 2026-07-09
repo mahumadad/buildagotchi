@@ -86,11 +86,12 @@ function makeClaudeAdapter() {
     resolvePermission: vi.fn((sessionId: string, action: 'approved' | 'denied') => {
       const s = sessions.get(sessionId);
       if (s?.pendingPermission) {
+        const eventId = s.pendingPermission.eventId;
         s.pendingPermission = undefined;
         s.state = action === 'approved' ? 'working' : 'idle';
-        return true;
+        return eventId;
       }
-      return false;
+      return null;
     }),
     onSessionChangeCallback: null,
     health: () => ({ status: 'HEALTHY' }),

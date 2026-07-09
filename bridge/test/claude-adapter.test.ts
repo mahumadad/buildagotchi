@@ -250,8 +250,8 @@ describe('ClaudeAdapter', () => {
     });
     expect(adapter.sessions().get('s1')?.state).toBe('permission_pending');
 
-    const resolved = adapter.resolvePermission('s1', 'approved');
-    expect(resolved).toBe(true);
+    const eventId = adapter.resolvePermission('s1', 'approved');
+    expect(eventId).toBeTypeOf('string');
     expect(adapter.sessions().get('s1')?.state).toBe('working');
     expect(adapter.sessions().get('s1')?.pendingPermission).toBeUndefined();
     await adapter.stop();
@@ -269,8 +269,8 @@ describe('ClaudeAdapter', () => {
       cwd: '/tmp',
     });
 
-    const resolved = adapter.resolvePermission('s1', 'denied');
-    expect(resolved).toBe(true);
+    const eventId = adapter.resolvePermission('s1', 'denied');
+    expect(eventId).toBeTypeOf('string');
     expect(adapter.sessions().get('s1')?.state).toBe('idle');
     await adapter.stop();
   });

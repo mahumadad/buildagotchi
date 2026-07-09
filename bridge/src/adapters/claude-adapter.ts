@@ -194,14 +194,15 @@ export class ClaudeAdapter implements Adapter {
     return this.#sessions;
   }
 
-  resolvePermission(sessionId: string, action: 'approved' | 'denied'): boolean {
+  resolvePermission(sessionId: string, action: 'approved' | 'denied'): string | null {
     const session = this.#sessions.get(sessionId);
-    if (!session?.pendingPermission) return false;
+    if (!session?.pendingPermission) return null;
 
+    const eventId = session.pendingPermission.eventId;
     session.pendingPermission = undefined;
     session.state = action === 'approved' ? 'working' : 'idle';
     this.#notifySessionChange();
-    return true;
+    return eventId;
   }
 
   #emit(

@@ -413,8 +413,9 @@ export class BridgeServer {
       return;
     }
     const mapped = action === 'approve' ? 'approved' : 'denied';
-    const resolved = this.#opts.claudeAdapter.resolvePermission(sessionId, mapped);
-    if (resolved) {
+    const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, mapped);
+    if (eventId) {
+      this.#opts.attentionManager.resolve(eventId, mapped === 'approved' ? 'approved' : 'denied');
       sendJson(res, 200, { resolved: true });
     } else {
       sendJson(res, 404, { error: 'no pending permission' });
