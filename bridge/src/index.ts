@@ -9,6 +9,8 @@ import { EventBus } from './core/bus.js';
 import type { Adapter, Event } from './core/events.js';
 import { registerShutdown } from './core/lifecycle.js';
 import { StateMachine } from './core/state-machine.js';
+import { loadPreset } from './personality/loader.js';
+import { PersonalityManager } from './personality/personality.js';
 import { MacosPlatform } from './platform/macos.js';
 import type { RecorderContext } from './recorder/recorder.js';
 import { EventRecorder } from './recorder/recorder.js';
@@ -96,23 +98,33 @@ async function main(): Promise<void> {
   });
   attentionManager.setMode(config.mode);
 
-  const stateMachine = new StateMachine(config.stateRules, {
-    emit: (state) => {
-      logger.info({ state }, '[stub transport] state'); // SPEC GAP: real transport wiring deferred, see above
-      server.notifyState(state);
+  const personalityPreset = loadPreset(config.personality.preset);
+  const personality = new PersonalityManager(
+    personalityPreset,
+    config.personality.preset === 'custom' ? config.personality.templates : undefined,
+  );
+
+  const stateMachine = new StateMachine(
+    config.stateRules,
+    {
+      emit: (state) => {
+        logger.info({ state }, '[stub transport] state'); // SPEC GAP: real transport wiring deferred, see above
+        server.notifyState(state);
+      },
+      record: (type, data) => {
+        recorder.record({ line_type: type, ts: Date.now(), context: recorderContext(), data });
+      },
+      metrics,
     },
-    record: (type, data) => {
-      recorder.record({ line_type: type, ts: Date.now(), context: recorderContext(), data });
-    },
-    metrics,
-  });
+    personality,
+  );
 
   const claudeAdapter = new ClaudeAdapter(
     {
-      staleSessionTimeoutMs: 1_800_000,
-      transcriptReadEnabled: true,
-      unknownLineThreshold: 5,
-      unknownLineBrokenThreshold: 20,
+      staleSessionTimeoutMs: config.claude.staleSessionTimeout,
+      transcriptReadEnabled: config.claude.transcriptReadEnabled,
+      unknownLineThreshold: config.claude.unknownLineThreshold,
+      unknownLineBrokenThreshold: config.claude.unknownLineBrokenThreshold,
     },
     {
       logger,
@@ -151,6 +163,12 @@ async function main(): Promise<void> {
     });
     attentionManager.setConfig(next.attentionManager);
     stateMachine.setRules(next.stateRules);
+    // Hot-reload personality
+    const nextPreset = loadPreset(next.personality.preset);
+    personality.reload(
+      nextPreset,
+      next.personality.preset === 'custom' ? next.personality.templates : undefined,
+    );
   });
 
   attentionManager.start();

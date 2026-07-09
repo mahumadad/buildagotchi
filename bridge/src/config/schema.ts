@@ -154,6 +154,24 @@ export const ConfigSchema = z.object({
       templates: z.record(z.string()).optional(),
     })
     .default({}),
+  claude: z
+    .object({
+      staleSessionTimeout: Duration.default('30m'),
+      transcriptReadEnabled: z.boolean().default(true),
+      unknownLineThreshold: z.number().default(5),
+      unknownLineBrokenThreshold: z.number().default(20),
+    })
+    .default({}),
+  mcp: z
+    .object({
+      enabled: z.boolean().default(true),
+    })
+    .default({}),
+  dashboard: z
+    .object({
+      enabled: z.boolean().default(true),
+    })
+    .default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

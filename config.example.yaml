@@ -129,3 +129,18 @@ personality:
   # templates:                    # only when preset: custom
   #   permission.pending: "..."
   #   build.failed: "..."
+
+# ClaudeAdapter config (D19, D21). Hooks installed via `bridge init --hooks`.
+claude:
+  staleSessionTimeout: 30m          # session without events → stale
+  transcriptReadEnabled: true        # one-shot transcript reads for enrichment
+  unknownLineThreshold: 5            # % unknown lines → DEGRADED
+  unknownLineBrokenThreshold: 20     # % unknown lines → BROKEN
+
+# MCP server (D26). Exposed as stdio server for Claude Code.
+mcp:
+  enabled: true
+
+# Dashboard UI served at localhost:1780.
+dashboard:
+  enabled: true
