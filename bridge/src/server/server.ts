@@ -1,23 +1,28 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, resolve, sep as pathSep } from 'node:path';
 import { z } from 'zod';
+import type { EventBus } from '../core/bus.js';
+import { replay, type ReplayResult } from '../recorder/replay.js';
 import type { ClaudeAdapter } from '../adapters/claude-adapter.js';
 import type { AttentionManager } from '../core/attention.js';
-import type { EventBus } from '../core/bus.js';
+import type { BalloonHistory } from '../core/balloon-history.js';
 import {
   type AdapterHealth,
+  EMOTIONS,
   type Event,
   type NewEventInput,
   SeveritySchema,
   newEvent,
 } from '../core/events.js';
+import { nextMode } from '../core/modes.js';
 import type { StateMachine } from '../core/state-machine.js';
 import { TOKEN_ACCOUNT, TOKEN_SERVICE } from '../platform/platform.js';
 import type { Platform } from '../platform/platform.js';
-import type { EventRecorder } from '../recorder/recorder.js';
+import { type EventRecorder, localDateString } from '../recorder/recorder.js';
 import type { Metrics } from './metrics.js';
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1MB (SPEC-IMPL-FASE-1A §5.3)
@@ -56,6 +61,8 @@ export interface BridgeServerOptions {
   stateMachine: StateMachine;
   getHealth: () => HealthPayload;
   claudeAdapter?: ClaudeAdapter;
+  /** Optional. When present, `GET /balloons` returns its `recent()`. */
+  balloonHistory?: BalloonHistory;
   publicDir?: string;
 }
 
@@ -95,6 +102,43 @@ class TokenBucket {
       return true;
     }
     return false;
+  }
+}
+
+/**
+ * Wrap `replay()` so `lastN` — which lives in the HTTP shape, not in
+ * ReplayOptions — can slice the ndjson before feeding it. When `lastN` is
+ * undefined we call the real file directly; otherwise we materialize a tmp
+ * ndjson with the last N event lines and replay THAT. The tmp file is
+ * cleaned up in a finally to survive a mid-replay throw.
+ */
+async function runReplayWithLastN(
+  file: string,
+  bus: EventBus,
+  opts: { instant?: boolean },
+  lastN?: number,
+): Promise<ReplayResult> {
+  if (lastN === undefined) return replay(file, bus, opts);
+  const raw = readFileSync(file, 'utf8');
+  const eventLines = raw
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .filter((l) => {
+      try {
+        const parsed = JSON.parse(l) as { line_type?: unknown };
+        return parsed.line_type === 'event';
+      } catch {
+        return false;
+      }
+    });
+  const slice = eventLines.slice(-lastN);
+  const tmpDir = mkdtempSync(join(tmpdir(), 'replay-lastN-'));
+  const tmpFile = join(tmpDir, 'slice.ndjson');
+  try {
+    writeFileSync(tmpFile, slice.join('\n') + '\n');
+    return await replay(tmpFile, bus, opts);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 
@@ -196,8 +240,39 @@ export class BridgeServer {
     return addr && typeof addr === 'object' ? addr : null;
   }
 
-  notifyState(state: unknown): void {
-    this.#broadcast('state', state);
+  /**
+   * The shape every client (dashboard, firmware, MCP) needs to render:
+   * resolved face state + attention snapshot. Single source, reused by every
+   * path — SSE broadcasts, GET /state, initial /stream snapshot.
+   *
+   * M14: added `active` and `queue` so the Attention panel renders without
+   * polling `/state`. `deadline` inside `active` may be `null` for events
+   * whose TTL override is `infinite` (like `permission_critical`).
+   */
+  #statePayload(): {
+    resolvedState: ReturnType<StateMachine['current']>;
+    mode: ReturnType<AttentionManager['snapshot']>['mode'];
+    active: ReturnType<AttentionManager['snapshot']>['active'];
+    queue: ReturnType<AttentionManager['snapshot']>['queue'];
+  } {
+    const snap = this.#opts.attentionManager.snapshot();
+    return {
+      resolvedState: this.#opts.stateMachine.current(),
+      mode: snap.mode,
+      active: snap.active,
+      queue: snap.queue,
+    };
+  }
+
+  /**
+   * Broadcast the current state to SSE clients. Reads directly from the state
+   * machine and attention manager — no argument — so every caller (emit,
+   * sim/mode, sim/touch) sends the same shape, and the class of bug where two
+   * paths sent different shapes is gone at the type level (S2.5.15). The
+   * defensive wrapper this replaced existed only to tolerate that split.
+   */
+  notifyState(): void {
+    this.#broadcast('state', this.#statePayload());
   }
 
   notifyEvent(event: unknown): void {
@@ -227,11 +302,18 @@ export class BridgeServer {
     if (method === 'GET' && path === '/health') return this.#handleHealth(res);
     if (method === 'GET' && path === '/stream') return this.#handleStream(res);
     if (method === 'GET' && path === '/metrics') return this.#handleMetrics(res);
+    if (method === 'GET' && path === '/balloons') return this.#handleBalloons(res);
     if (method === 'POST' && path === '/events') return this.#handlePostEvent(req, res);
     if (method === 'POST' && path === '/hooks/claude') return this.#handleHookClaude(req, res);
+    if (method === 'POST' && path === '/replay') return this.#handleReplay(req, res);
     if (method === 'POST' && path.startsWith('/approve/')) {
       return this.#handleApprove(req, res, path);
     }
+    if (method === 'POST' && path === '/sim/mode') return this.#handleSimMode(res);
+    if (method === 'POST' && path === '/sim/emotion') return this.#handleSimEmotion(req, res);
+    if (method === 'POST' && path === '/sim/button') return this.#handleSimButton(req, res);
+    if (method === 'POST' && path === '/sim/touch') return this.#handleSimTouch(req, res);
+    if (method === 'POST' && path === '/sim/permission') return this.#handleSimPermission(req, res);
     if (method === 'GET' && path === '/') return this.#serveStatic('/index.html', res);
     if (method === 'GET' && this.#isStaticPath(path)) return this.#serveStatic(path, res);
 
@@ -239,12 +321,9 @@ export class BridgeServer {
   }
 
   #handleState(res: ServerResponse): void {
-    const snapshot = this.#opts.attentionManager.snapshot();
+    // GET /state adds `uptimeMs` on top of the SSE-shared payload.
     sendJson(res, 200, {
-      resolvedState: this.#opts.stateMachine.current(),
-      active: snapshot.active,
-      queue: snapshot.queue,
-      mode: snapshot.mode,
+      ...this.#statePayload(),
       uptimeMs: Date.now() - this.#startedAt,
     });
   }
@@ -271,11 +350,116 @@ export class BridgeServer {
     res.on('close', () => {
       this.#sseClients.delete(res);
     });
+    this.#writeSse(res, 'state', this.#statePayload());
+    if (this.#opts.claudeAdapter) {
+      this.#writeSse(res, 'session', this.#sessionsPayload());
+    }
+  }
+
+  #writeSse(res: ServerResponse, event: string, data: unknown): void {
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch {
+      // client disconnected
+    }
+  }
+
+  #sessionsPayload(): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    if (!this.#opts.claudeAdapter) return out;
+    for (const [id, s] of this.#opts.claudeAdapter.sessions()) {
+      out[id] = s;
+    }
+    return out;
   }
 
   #handleMetrics(res: ServerResponse): void {
     res.writeHead(200, { 'content-type': 'text/plain' });
     res.end(this.#opts.metrics.exposition());
+  }
+
+  /**
+   * M15: last N balloons the face has shown. No auth (localhost, non-destructive
+   * — D26). Empty array if the history isn't wired.
+   */
+  #handleBalloons(res: ServerResponse): void {
+    const recent = this.#opts.balloonHistory?.recent() ?? [];
+    sendJson(res, 200, recent);
+  }
+
+  /**
+   * M16: re-runs an ndjson through the bus. Gated by `--simulate` (S2.5.7):
+   * republishing to the bus in production would rewrite real state. Path
+   * traversal is closed via `realpath` — plain `resolve()` misses symlinks
+   * that escape the recorder dir.
+   */
+  async #handleReplay(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.#opts.simulate) {
+      sendJson(res, 403, { error: 'replay disabled in production' });
+      return;
+    }
+    const body = await readBody(req, MAX_BODY_BYTES);
+    if (!body.ok) {
+      sendJson(res, 413, { error: 'payload too large' });
+      return;
+    }
+    let parsed: { file?: unknown; lastN?: unknown; instant?: unknown } = {};
+    if (body.data.length > 0) {
+      try {
+        parsed = JSON.parse(body.data);
+      } catch {
+        sendJson(res, 400, { error: 'invalid JSON' });
+        return;
+      }
+    }
+
+    const recorderDir = this.#opts.recorder.dir;
+    let filePath: string;
+    if (typeof parsed.file === 'string') {
+      const naive = resolve(recorderDir, parsed.file);
+      // realpath resolves symlinks; a symlink escaping the recorder dir would
+      // land the real path outside — reject with 400 rather than reading it.
+      let real: string;
+      try {
+        real = realpathSync(naive);
+      } catch {
+        sendJson(res, 400, { error: 'file not found' });
+        return;
+      }
+      const realRoot = realpathSync(recorderDir);
+      if (!real.startsWith(realRoot + pathSep) && real !== realRoot) {
+        sendJson(res, 400, { error: 'path escapes recorder dir' });
+        return;
+      }
+      filePath = real;
+    } else {
+      // Local date, matching the recorder's own rotation (see recorder.ts).
+      filePath = join(recorderDir, `${localDateString(Date.now())}.ndjson`);
+    }
+
+    if (!existsSync(filePath)) {
+      sendJson(res, 400, { error: 'no ndjson to replay' });
+      return;
+    }
+
+    const lastN = typeof parsed.lastN === 'number' && parsed.lastN > 0
+      ? Math.floor(parsed.lastN)
+      : undefined;
+    const instant = parsed.instant === true;
+
+    // Setting replay mode on the recorder tags every re-recorded line so the
+    // day-log doesn't turn into a lie later. Restored in finally.
+    this.#opts.recorder.setReplayMode(true);
+    try {
+      const result = await runReplayWithLastN(filePath, this.#opts.bus, { instant }, lastN);
+      this.#opts.metrics.counter('replay_runs_total').inc();
+      sendJson(res, 200, result);
+    } catch (err) {
+      this.#opts.logger.error({ err }, 'replay failed');
+      sendJson(res, 500, { error: 'replay failed' });
+    } finally {
+      this.#opts.recorder.setReplayMode(false);
+    }
   }
 
   async #handlePostEvent(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -422,8 +606,207 @@ export class BridgeServer {
     }
   }
 
+  #handleSimMode(res: ServerResponse): void {
+    if (!this.#opts.simulate) {
+      sendJson(res, 403, { error: 'simulation endpoints disabled in production' });
+      return;
+    }
+    const current = this.#opts.attentionManager.snapshot().mode;
+    const next = nextMode(current);
+    this.#opts.attentionManager.setMode(next);
+    this.#opts.stateMachine.apply(this.#opts.attentionManager.snapshot().active);
+    this.notifyState();
+    sendJson(res, 200, { mode: next });
+  }
+
+  async #handleSimEmotion(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.#opts.simulate) {
+      sendJson(res, 403, { error: 'simulation endpoints disabled in production' });
+      return;
+    }
+    const body = await readBody(req, MAX_BODY_BYTES);
+    if (!body.ok) {
+      sendJson(res, 413, { error: 'payload too large' });
+      return;
+    }
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body.data);
+    } catch {
+      sendJson(res, 400, { error: 'invalid JSON' });
+      return;
+    }
+    const emotion = parsed.emotion;
+    if (typeof emotion !== 'string' || !EMOTIONS.includes(emotion as never)) {
+      sendJson(res, 400, { error: `emotion must be one of: ${EMOTIONS.join(', ')}` });
+      return;
+    }
+    const event = newEvent({
+      source: 'mcp:set_face',
+      category: 'face_override',
+      severity: 'medium',
+      payload: { emotion, balloon: parsed.balloon ?? undefined },
+      ttlMs: 10_000,
+    });
+    this.#opts.bus.publish(event);
+    sendJson(res, 202, { emotion, id: event.id });
+  }
+
+  async #handleSimButton(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.#opts.simulate) {
+      sendJson(res, 403, { error: 'simulation endpoints disabled in production' });
+      return;
+    }
+    const body = await readBody(req, MAX_BODY_BYTES);
+    if (!body.ok) {
+      sendJson(res, 413, { error: 'payload too large' });
+      return;
+    }
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body.data);
+    } catch {
+      sendJson(res, 400, { error: 'invalid JSON' });
+      return;
+    }
+    const button = parsed.button;
+    if (button !== 'A' && button !== 'B' && button !== 'C') {
+      sendJson(res, 400, { error: 'button must be A, B, or C' });
+      return;
+    }
+    if (button === 'C') {
+      this.#handleSimMode(res);
+      return;
+    }
+    const action = button === 'A' ? 'approve' : 'deny';
+    const resolved = this.#resolveFirstPendingPermission(action);
+    if (resolved) {
+      sendJson(res, 200, { button, action, resolved: true, sessionId: resolved });
+      return;
+    }
+    const event = newEvent({
+      source: 'firmware',
+      category: 'button_pressed',
+      severity: 'low',
+      payload: { button },
+    });
+    this.#opts.bus.publish(event);
+    sendJson(res, 202, { button, id: event.id });
+  }
+
+  async #handleSimTouch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.#opts.simulate) {
+      sendJson(res, 403, { error: 'simulation endpoints disabled in production' });
+      return;
+    }
+    const body = await readBody(req, MAX_BODY_BYTES);
+    if (!body.ok) {
+      sendJson(res, 413, { error: 'payload too large' });
+      return;
+    }
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body.data);
+    } catch {
+      sendJson(res, 400, { error: 'invalid JSON' });
+      return;
+    }
+    const gesture = parsed.gesture;
+    const valid = ['tap', 'swipe_fwd', 'swipe_back', 'hold'];
+    if (typeof gesture !== 'string' || !valid.includes(gesture)) {
+      sendJson(res, 400, { error: `gesture must be one of: ${valid.join(', ')}` });
+      return;
+    }
+    if (gesture === 'tap') {
+      const resolved = this.#resolveFirstPendingPermission('approve');
+      if (resolved) {
+        sendJson(res, 200, { gesture, action: 'approve', resolved: true, sessionId: resolved });
+        return;
+      }
+    }
+    if (gesture === 'hold') {
+      this.#opts.attentionManager.setMode('SLEEP');
+      this.#opts.stateMachine.apply(this.#opts.attentionManager.snapshot().active);
+      this.notifyState();
+      sendJson(res, 200, { gesture, mode: 'SLEEP' });
+      return;
+    }
+    const event = newEvent({
+      source: 'firmware',
+      category: 'touch_head',
+      severity: gesture === 'hold' ? 'medium' : 'low',
+      payload: { gesture },
+    });
+    this.#opts.bus.publish(event);
+    sendJson(res, 202, { gesture, id: event.id });
+  }
+
+  #resolveFirstPendingPermission(action: 'approve' | 'deny'): string | null {
+    if (!this.#opts.claudeAdapter) return null;
+    for (const [sessionId, session] of this.#opts.claudeAdapter.sessions()) {
+      if (session.pendingPermission) {
+        const mapped = action === 'approve' ? 'approved' : 'denied';
+        const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, mapped);
+        if (eventId) {
+          this.#opts.attentionManager.resolve(eventId, mapped);
+          return sessionId;
+        }
+      }
+    }
+    return null;
+  }
+
+  async #handleSimPermission(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.#opts.simulate) {
+      sendJson(res, 403, { error: 'simulation endpoints disabled in production' });
+      return;
+    }
+    if (!this.#opts.claudeAdapter) {
+      sendJson(res, 404, { error: 'claude adapter not configured' });
+      return;
+    }
+    const body = await readBody(req, MAX_BODY_BYTES);
+    if (!body.ok) {
+      sendJson(res, 413, { error: 'payload too large' });
+      return;
+    }
+    let parsed: Record<string, unknown> = {};
+    if (body.data.length > 0) {
+      try {
+        parsed = JSON.parse(body.data);
+      } catch {
+        sendJson(res, 400, { error: 'invalid JSON' });
+        return;
+      }
+    }
+    const requestedSessionId = typeof parsed.sessionId === 'string' ? parsed.sessionId : null;
+    const existing = requestedSessionId
+      ? this.#opts.claudeAdapter.sessions().get(requestedSessionId)
+      : undefined;
+    const sessionId = requestedSessionId ?? `sim-${Date.now().toString(36)}`;
+    const cwd = typeof parsed.cwd === 'string' ? parsed.cwd : (existing?.cwd ?? '/sim/cwd');
+    const command = typeof parsed.command === 'string' ? parsed.command : 'rm -rf /tmp/example';
+    if (!existing) {
+      this.#opts.claudeAdapter.handleHookEvent({
+        hook_event_name: 'UserPromptSubmit',
+        session_id: sessionId,
+        cwd,
+        prompt: command,
+      });
+    }
+    this.#opts.claudeAdapter.handleHookEvent({
+      hook_event_name: 'Notification',
+      session_id: sessionId,
+      cwd,
+      notification_type: 'permission_prompt',
+      command,
+      message: command,
+    });
+    sendJson(res, 202, { sessionId, command, existed: !!existing });
+  }
+
   #isStaticPath(path: string): boolean {
-    return /^\/([\w-]+\.(?:html|css|js))$/.test(path);
+    return /^\/([\w./-]+\.(?:html|css|js|mjs|stl))$/.test(path);
   }
 
   #serveStatic(path: string, res: ServerResponse): void {
@@ -432,7 +815,7 @@ export class BridgeServer {
       return;
     }
     const filename = path === '/' ? 'index.html' : path.slice(1);
-    if (filename.includes('..') || filename.includes('/')) {
+    if (filename.includes('..')) {
       sendJson(res, 404, { error: 'not found' });
       return;
     }
@@ -445,10 +828,13 @@ export class BridgeServer {
       html: 'text/html; charset=utf-8',
       css: 'text/css; charset=utf-8',
       js: 'text/javascript; charset=utf-8',
+      mjs: 'text/javascript; charset=utf-8',
+      stl: 'application/octet-stream',
     };
     const ext = filename.split('.').pop() ?? '';
     const contentType = contentTypes[ext] ?? 'application/octet-stream';
-    const content = readFileSync(filePath, 'utf-8');
+    const binary = ext === 'stl';
+    const content = binary ? readFileSync(filePath) : readFileSync(filePath, 'utf-8');
     res.writeHead(200, { 'content-type': contentType, 'cache-control': 'no-cache' });
     res.end(content);
   }

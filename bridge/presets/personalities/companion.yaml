@@ -7,9 +7,22 @@ decoratorsBySeverity:
   medium: []
   low: []
   ambient: []
+
+# Keys match ClaudeAdapter's real emitted categories (CLAUDE_CATEGORIES).
+# Migrated from the two-phase-old `permission.pending` / `permission.critical`
+# scheme that never matched anything — see M13 §4.4 and the contract test in
+# test/personality-contract.test.ts.
 templates:
-  permission.pending: "{project}: permiso pendiente"
-  permission.critical: "{project}: ⚠ {command}"
-  error: "algo salió mal"
-  session.new: "nueva sesión"
+  permission: "{project}: {command}"
+  permission_critical: "{project}: ⚠ {command}"
+  permission_resolved: ""
+  response: "[{project}] {text}"
+  error: "✕ {message}"
   session.idle: "{project}: idle"
+
+# Categories intentionally left without a template. Contract test allows these;
+# any category NOT in this list AND without a template fails the test.
+silentCategories:
+  - prompt
+  - subagent
+  - notification

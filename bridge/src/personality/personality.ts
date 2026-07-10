@@ -1,14 +1,18 @@
 import type { Emotion, Severity } from '../core/events.js';
+import { interpolate } from './interpolate.js';
 
 export interface PersonalityPreset {
   name: string;
   idleEmotion: Emotion;
   decoratorsBySeverity: Partial<Record<Severity, string[]>>;
   templates: Record<string, string>;
-}
-
-function interpolate(template: string, context: Record<string, string>): string {
-  return template.replace(/\{(\w+)\}/g, (_, key) => context[key] ?? `{${key}}`);
+  /**
+   * Categories intentionally left without a template (S2.5.8). The contract
+   * test in M13 iterates `CLAUDE_CATEGORIES` × each preset and fails on any
+   * category that has neither a template nor a slot here — the same failure
+   * mode that hid the vacuous `balloon()` for two phases.
+   */
+  silentCategories?: string[];
 }
 
 const FALLBACK_PRESET: PersonalityPreset = {
@@ -27,9 +31,15 @@ export class PersonalityManager {
     this.#customTemplates = customTemplates ?? {};
   }
 
+  /**
+   * Returns the interpolated template for `category`, or `null` if no template
+   * exists. `""` (empty string) is a valid return — it means "clear the balloon",
+   * distinct from "no template defined" (S2.5.10). The caller must check
+   * `!== null`, not falsy.
+   */
   balloon(category: string, context?: Record<string, string>): string | null {
     const template = this.#customTemplates[category] ?? this.#preset.templates[category];
-    if (!template) return null;
+    if (template === undefined) return null;
     return interpolate(template, context ?? {});
   }
 

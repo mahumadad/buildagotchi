@@ -24,7 +24,7 @@ describe('loadPreset', () => {
     const preset = loadPreset('companion', PRESETS_DIR);
     expect(preset.name).toBe('companion');
     expect(preset.idleEmotion).toBe('NEUTRAL');
-    expect(preset.templates['permission.pending']).toBe('{project}: permiso pendiente');
+    expect(preset.templates['permission']).toBe('{project}: {command}');
   });
 
   it('falls back to a minimal preset when the file is missing, without crashing', () => {
@@ -42,15 +42,15 @@ describe('PersonalityManager', () => {
   it('interpolates balloon templates with the given context', () => {
     const preset = loadPreset('companion', PRESETS_DIR);
     const manager = new PersonalityManager(preset);
-    expect(manager.balloon('permission.pending', { project: 'myapp' })).toBe(
-      'myapp: permiso pendiente',
+    expect(manager.balloon('permission', { project: 'myapp' })).toBe(
+      'myapp: {command}',
     );
   });
 
   it('leaves unresolved placeholders untouched when a variable is missing', () => {
     const preset = loadPreset('companion', PRESETS_DIR);
     const manager = new PersonalityManager(preset);
-    expect(manager.balloon('permission.pending', {})).toBe('{project}: permiso pendiente');
+    expect(manager.balloon('permission', {})).toBe('{project}: {command}');
   });
 
   it('returns null for an unknown category', () => {
@@ -80,20 +80,20 @@ describe('PersonalityManager', () => {
   it('prefers custom templates over the preset templates', () => {
     const preset = loadPreset('companion', PRESETS_DIR);
     const manager = new PersonalityManager(preset, {
-      'permission.pending': 'custom override',
+      'permission': 'custom override',
     });
-    expect(manager.balloon('permission.pending', { project: 'myapp' })).toBe('custom override');
+    expect(manager.balloon('permission', { project: 'myapp' })).toBe('custom override');
   });
 
   it('reload() swaps the active preset and its templates', () => {
     const companion = loadPreset('companion', PRESETS_DIR);
     const supervisor = loadPreset('supervisor', PRESETS_DIR);
     const manager = new PersonalityManager(companion);
-    expect(manager.balloon('permission.pending', { project: 'myapp' })).toBe(
-      'myapp: permiso pendiente',
+    expect(manager.balloon('permission', { project: 'myapp' })).toBe(
+      'myapp: {command}',
     );
     manager.reload(supervisor);
-    expect(manager.balloon('permission.pending', { project: 'myapp' })).toBe(
+    expect(manager.balloon('permission', { project: 'myapp' })).toBe(
       'Autorización requerida',
     );
     expect(manager.presetName()).toBe('supervisor');
@@ -102,7 +102,7 @@ describe('PersonalityManager', () => {
 
 describe('StateMachine with personality', () => {
   const RULES: StateRule[] = [
-    { match: { category: 'permission.pending' }, state: { emotion: 'DOUBTFUL' } },
+    { match: { category: 'permission' }, state: { emotion: 'DOUBTFUL' } },
     { match: { severity: 'critical' }, state: { emotion: 'ANGRY' } },
   ];
 
@@ -112,12 +112,12 @@ describe('StateMachine with personality', () => {
     const sm = new StateMachine(RULES, deps(), manager);
     const e = newEvent({
       source: 'claude',
-      category: 'permission.pending',
+      category: 'permission',
       severity: 'high',
       payload: { cwd: '/Users/x/myapp' },
     });
     sm.apply({ event: e, deadline: null });
-    expect(sm.current().balloon).toBe('myapp: permiso pendiente');
+    expect(sm.current().balloon).toBe('myapp: {command}');
   });
 
   it('uses the personality idle emotion when there is no active attention', () => {
@@ -134,7 +134,7 @@ describe('StateMachine with personality', () => {
     const sm = new StateMachine(RULES, deps(), manager);
     const e = newEvent({
       source: 'claude',
-      category: 'permission.pending',
+      category: 'permission',
       severity: 'critical',
       payload: {},
     });

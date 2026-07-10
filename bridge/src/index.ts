@@ -5,6 +5,7 @@ import { DemoAdapter } from './adapters/demo.js';
 import { parseArgs } from './cli.js';
 import { ConfigLoader } from './config/loader.js';
 import { AttentionManager } from './core/attention.js';
+import { BalloonHistory } from './core/balloon-history.js';
 import { EventBus } from './core/bus.js';
 import type { Adapter, Event } from './core/events.js';
 import { registerShutdown } from './core/lifecycle.js';
@@ -104,17 +105,22 @@ async function main(): Promise<void> {
     config.personality.preset === 'custom' ? config.personality.templates : undefined,
   );
 
+  const balloonHistory = new BalloonHistory(config.dashboard.balloonHistorySize);
+
   const stateMachine = new StateMachine(
     config.stateRules,
     {
       emit: (state) => {
-        logger.info({ state }, '[stub transport] state'); // SPEC GAP: real transport wiring deferred, see above
-        server.notifyState(state);
+        // `state` param preserved for the future BLE transport (S2.5.15). The
+        // server reads its own copy from the state machine.
+        logger.info({ state }, '[stub transport] state'); // SPEC GAP: real transport wiring deferred
+        server.notifyState();
       },
       record: (type, data) => {
         recorder.record({ line_type: type, ts: Date.now(), context: recorderContext(), data });
       },
       metrics,
+      balloonHistory,
     },
     personality,
   );
@@ -149,6 +155,7 @@ async function main(): Promise<void> {
     attentionManager,
     stateMachine,
     claudeAdapter,
+    balloonHistory,
     publicDir: join(import.meta.dirname, 'server', 'public'),
     getHealth: () => ({
       adapters: Object.fromEntries(adapters.map((a) => [a.name, a.health()])),

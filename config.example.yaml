@@ -36,8 +36,14 @@ attentionManager:
   # Per-source overrides. `infinite` parses to null internally — the event
   # never times out on its own; only resolves via explicit action
   # (approve/deny, dismiss) or being replaced by a higher-severity event.
+  # S2.5.8: BOTH permission categories need the infinite override. Without the
+  # `permission_critical` entry, the destructive-command permission would fall
+  # to ttlBySeverity.critical (30s) and its balloon would ghost — the exact
+  # scenario the council reproduced on 2026-07-09. Test 4 of M13 enforces this
+  # invariant against `CLAUDE_CRITICAL_CATEGORIES`.
   ttlOverrides:
     - { source: claude, category: permission, ttl: infinite }
+    - { source: claude, category: permission_critical, ttl: infinite }
 
   maxQueueSize: 20                                # drops oldest lowest-severity when full
   replacementPolicy: higher_severity_interrupts   # or: always_enqueue
@@ -77,28 +83,98 @@ ble:
     max: 10s
 
 # Event → ResolvedState mapping (D3 — no hard-wiring adapters to emotions here).
-# First rule that matches wins. Add defaults by severity as a safety net.
+# First rule that matches wins. Severity-only rules at the end are the safety net.
+# S2.5.16: `pattern` must be one of {solid, blink, rainbow, off} — the firmware's
+# real capabilities. The zod enum enforces this at load time.
 stateRules:
+  # ── Permisos ─────────────────────────────────────────────────────────────
+  # Destructive command → red-blink LED, angry_mark decorator. balloonPolicy is
+  # transient by default; the balloon dies with the event (S2.5.2). This is
+  # what closes the ghost-balloon bug the council reproduced.
+  - match: { source: claude, category: permission_critical }
+    state:
+      emotion: DOUBTFUL
+      decorators: [angry_mark]
+      servo: { pitch: 10 }
+      leds: [{ row: left, color: red, pattern: blink }]
+      sound: permission
+      balloon: "{project}: ⚠ {command}"
+
   - match: { source: claude, category: permission }
     state:
       emotion: DOUBTFUL
       servo: { pitch: 10 }
       leds: [{ row: left, color: amber, pattern: solid }]
+      sound: permission
+      balloon: "{project}: {command}"
 
+  - match: { source: claude, category: permission_resolved }
+    state:
+      emotion: HAPPY
+      leds: [{ row: left, color: green, pattern: solid }]
+      sound: approve
+      balloon: ""  # explicit clear for the "resolved" flash
+
+  # ── Ciclo de trabajo de Claude ───────────────────────────────────────────
+  # `response` is sticky (S2.5.2): the assistant's answer survives idle, so the
+  # user can walk away and come back and still see what was said. Every other
+  # claude rule is transient — the default and the safe choice.
+  - match: { source: claude, category: response }
+    balloonPolicy: sticky
+    state:
+      emotion: HAPPY
+      leds: [{ row: right, color: green, pattern: blink }]
+      sound: notification
+      balloon: "[{project}] {text}"
+
+  # No `balloon` field → the balloon INHERITS from the previous state. That's
+  # what makes the `response` above survive a new prompt.
+  - match: { source: claude, category: prompt }
+    state:
+      emotion: NEUTRAL
+      gaze: center
+      leds: [{ row: right, color: blue, pattern: blink }]
+
+  # Silent by design: a subagent starting shouldn't interrupt (Calm Tech).
+  - match: { source: claude, category: subagent }
+    state:
+      emotion: NEUTRAL
+      leds: [{ row: right, color: blue, pattern: solid }]
+
+  - match: { source: claude, category: notification }
+    state:
+      emotion: NEUTRAL
+      leds: [{ row: right, color: amber, pattern: solid }]
+
+  # ── Errores ──────────────────────────────────────────────────────────────
+  # No adapter emits `category: error` yet; the rule exists for `POST /events`
+  # (D26) and Fase 3's GitHubAdapter (CI red) / Fase 6's ChromeAdapter.
+  - match: { category: error }
+    state:
+      emotion: ANGRY
+      decorators: [angry_mark]
+      leds: [{ row: right, color: red, pattern: blink }]
+      sound: error
+      balloon: "✕ {message}"
+
+  # ── Defaults por severidad (red de seguridad) ────────────────────────────
   - match: { severity: critical }
     state:
       emotion: ANGRY
       leds: [{ row: right, color: red, pattern: blink }]
+      sound: error
 
   - match: { severity: high }
     state:
       emotion: SAD
       leds: [{ row: right, color: red, pattern: solid }]
+      sound: notification
 
   - match: { severity: medium }
     state:
       emotion: NEUTRAL
       leds: [{ row: right, color: amber, pattern: solid }]
+      sound: notification
 
   - match: { severity: low }
     state:

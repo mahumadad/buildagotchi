@@ -4,6 +4,11 @@ import { join } from 'node:path';
 import type { EventBus } from '../core/bus.js';
 import { type Adapter, type AdapterHealth, newEvent } from '../core/events.js';
 import type { Metrics } from '../server/metrics.js';
+import {
+  defaultClaudeDesktopSessionsDir,
+  readDesktopSessionTitles,
+} from './claude-desktop-titles.js';
+import { scanClaudeSessions } from './claude-jsonl-scanner.js';
 import { readTranscriptTail } from './claude-transcript.js';
 
 interface MinimalLogger {
@@ -11,11 +16,49 @@ interface MinimalLogger {
   info(obj: Record<string, unknown>, msg: string): void;
 }
 
+/**
+ * Every event category this adapter can emit. Consumed by the M13 contract test
+ * that iterates all presets and asserts each has either a template or a
+ * documented `silentCategories` entry (S2.5.8) — the same failure mode that hid
+ * the vacuous `PersonalityManager.balloon()` for two phases.
+ *
+ * Adding a category here without updating the presets fails the test loudly.
+ */
+export const CLAUDE_CATEGORIES = [
+  'prompt',
+  'response',
+  'permission',
+  'permission_critical',
+  'permission_resolved',
+  'notification',
+  'subagent',
+] as const;
+
+/**
+ * Categories emitted with `severity: 'critical'`. Consumed by the TTL guard
+ * test (S2.5.8): for every entry here, `AmConfig.ttlOverrides` MUST resolve to
+ * `null` (infinite). Without this, `permission_critical` would silently fall
+ * to `ttlBySeverity.critical` = 30s and leave the balloon stale — the exact
+ * scenario the council verified on 2026-07-09.
+ */
+export const CLAUDE_CRITICAL_CATEGORIES = ['permission', 'permission_critical'] as const;
+
+export type ClaudeCategory = (typeof CLAUDE_CATEGORIES)[number];
+
 export interface ClaudeSession {
   sessionId: string;
   cwd: string;
+  /** User-assigned chat title from Claude Desktop (titleSource="user").
+   *  Highest-priority name shown in the dashboard when present. */
+  desktopTitle?: string | undefined;
+  /** Human-readable slug assigned by Claude Code (e.g. "dreamy-stirring-beaver").
+   *  Only populated from transcript scan; hooks don't emit this field. */
+  slug?: string | undefined;
+  title?: string | undefined;
   state: 'working' | 'idle' | 'permission_pending' | 'stale';
   lastEventAt: number;
+  lastPrompt?: string | undefined;
+  lastResponse?: string | undefined;
   pendingPermission?:
     | {
         eventId: string;
@@ -30,6 +73,10 @@ export interface ClaudeAdapterConfig {
   transcriptReadEnabled: boolean;
   unknownLineThreshold: number;
   unknownLineBrokenThreshold: number;
+  /** How often to scan ~/.claude/projects for active sessions (0 disables). Default 30s. */
+  scanIntervalMs?: number;
+  /** Only files with mtime within this window are considered live. Default 2h. */
+  scanFreshWindowMs?: number;
 }
 
 export interface ClaudeAdapterDeps {
@@ -37,12 +84,23 @@ export interface ClaudeAdapterDeps {
   metrics: Metrics;
   criticalCommands: string[];
   stateDir: string;
+  /** Root of Claude Code transcript storage. Default `~/.claude/projects`. */
+  projectsDir?: string;
+  /** Claude Desktop's chat metadata dir. Default: macOS Application Support path. */
+  claudeDesktopSessionsDir?: string;
 }
 
 const HEALTH_RANK: Record<AdapterHealth, number> = { HEALTHY: 0, DEGRADED: 1, BROKEN: 2 };
 const RANK_TO_HEALTH: AdapterHealth[] = ['HEALTHY', 'DEGRADED', 'BROKEN'];
 const STALE_EXTRA_MS = 300_000;
 const HOOK_DEGRADED_MS = 300_000;
+const DEFAULT_SCAN_INTERVAL_MS = 30_000;
+const DEFAULT_SCAN_FRESH_WINDOW_MS = 2 * 60 * 60 * 1000;
+
+function defaultProjectsDir(): string {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  return home ? join(home, '.claude', 'projects') : '';
+}
 
 export class ClaudeAdapter implements Adapter {
   readonly name = 'claude';
@@ -54,6 +112,7 @@ export class ClaudeAdapter implements Adapter {
   #lastEventAt: number | undefined;
   #unknownLineRatio = 0;
   #staleTimer: NodeJS.Timeout | null = null;
+  #scanTimer: NodeJS.Timeout | null = null;
   #onSessionChange: ((sessions: ReadonlyMap<string, ClaudeSession>) => void) | null = null;
 
   constructor(cfg: ClaudeAdapterConfig, deps: ClaudeAdapterDeps) {
@@ -69,12 +128,24 @@ export class ClaudeAdapter implements Adapter {
     this.#bus = bus;
     this.#loadFallbackFiles();
     this.#staleTimer = setInterval(() => this.#cleanStale(), 60_000);
+
+    const scanInterval = this.#cfg.scanIntervalMs ?? DEFAULT_SCAN_INTERVAL_MS;
+    if (scanInterval > 0) {
+      // Fire once at startup so sessions that existed before this process launched appear
+      // in the dashboard immediately (D19 hybrid: hooks still handle real-time events).
+      void this.#runScan();
+      this.#scanTimer = setInterval(() => void this.#runScan(), scanInterval);
+    }
   }
 
   async stop(): Promise<void> {
     if (this.#staleTimer) {
       clearInterval(this.#staleTimer);
       this.#staleTimer = null;
+    }
+    if (this.#scanTimer) {
+      clearInterval(this.#scanTimer);
+      this.#scanTimer = null;
     }
   }
 
@@ -113,12 +184,27 @@ export class ClaudeAdapter implements Adapter {
     }
 
     switch (hookEventName) {
-      case 'UserPromptSubmit':
+      case 'UserPromptSubmit': {
+        // If the user approved/denied a permission in the CLI or Desktop chat
+        // instead of the dashboard, we never got a resolve — clear it now so the
+        // card and balloon stop showing a stale pending state.
+        this.#autoResolvePending(session, 'external');
         session.state = 'working';
-        this.#emit('prompt', 'ambient', { sessionId, cwd: session.cwd });
+        const prompt = typeof payload.prompt === 'string' ? payload.prompt : undefined;
+        if (prompt !== undefined) {
+          session.lastPrompt = prompt;
+          if (!session.title) session.title = prompt.replace(/\s+/g, ' ').trim().slice(0, 80);
+        }
+        this.#emit('prompt', 'ambient', {
+          sessionId,
+          cwd: session.cwd,
+          ...(prompt !== undefined ? { text: prompt } : {}),
+        });
         break;
+      }
 
       case 'Stop': {
+        this.#autoResolvePending(session, 'external');
         // The Stop payload carries the final text as `last_assistant_message`; only
         // dip into the transcript for the token count, which the payload lacks.
         const enrichment = this.#readTranscript(payload);
@@ -127,12 +213,20 @@ export class ClaudeAdapter implements Adapter {
             ? payload.last_assistant_message
             : enrichment?.text;
         session.state = 'idle';
+        if (text !== undefined) session.lastResponse = text;
         this.#emit('response', 'ambient', {
           sessionId,
           cwd: session.cwd,
           ...(enrichment?.tokens !== undefined ? { tokens: enrichment.tokens } : {}),
           ...(text !== undefined ? { text } : {}),
         });
+        break;
+      }
+
+      case 'PostToolUse': {
+        // PostToolUse fires after Claude Code runs a tool the user approved.
+        // If we had a pending permission on this session, that's how it was resolved.
+        this.#autoResolvePending(session, 'approved');
         break;
       }
 
@@ -144,13 +238,24 @@ export class ClaudeAdapter implements Adapter {
         if (payload.notification_type === 'permission_prompt') {
           session.state = 'permission_pending';
           const enrichment = this.#readTranscript(payload);
-          const command = enrichment?.command;
+          // Prefer explicit command from the payload (used by /sim/permission and any
+          // future push-based sources); fall back to transcript enrichment otherwise.
+          const command =
+            typeof payload.command === 'string'
+              ? payload.command
+              : typeof payload.message === 'string'
+                ? payload.message
+                : enrichment?.command;
           const isCritical = command
             ? this.#deps.criticalCommands.some((c) => command.includes(c))
             : false;
+          // S2.5.8: split into two categories so `stateRules` can map them to
+          // distinct expressions (red-blink vs amber-solid, distinct templates)
+          // without special-casing `payload.isCritical` in the state machine.
+          // `payload.isCritical` is kept for the dashboard's `⚠` marker on the card.
           const event = newEvent({
             source: 'claude',
-            category: 'permission',
+            category: isCritical ? 'permission_critical' : 'permission',
             severity: 'critical',
             payload: {
               sessionId,
@@ -205,6 +310,38 @@ export class ClaudeAdapter implements Adapter {
     return eventId;
   }
 
+  /**
+   * Clears a pending permission when Claude Code signals the user resolved it
+   * outside the dashboard (approve/deny in the CLI or Desktop chat). Publishes
+   * an ambient event so the AttentionManager can drop the critical balloon.
+   *
+   * source="approved" is used for PostToolUse (we know the tool ran, so the
+   * user approved). source="external" is used for UserPromptSubmit/Stop —
+   * something happened but we can't tell if it was approve or deny, so the
+   * event carries "external" and downstream code treats it as resolved.
+   */
+  #autoResolvePending(session: ClaudeSession, source: 'approved' | 'external'): void {
+    const pending = session.pendingPermission;
+    if (!pending) return;
+    session.pendingPermission = undefined;
+    // PostToolUse means the tool ran → Claude is back to working. For the
+    // "external" case the surrounding switch (UserPromptSubmit / Stop) will
+    // overwrite state right after this returns, so it doesn't matter here —
+    // but nudging to a non-permission state avoids a stale flicker if some
+    // future caller uses autoResolve without going through those cases.
+    if (source === 'approved') {
+      session.state = 'working';
+    } else if (session.state === 'permission_pending') {
+      session.state = 'idle';
+    }
+    this.#emit('permission_resolved', 'ambient', {
+      sessionId: session.sessionId,
+      cwd: session.cwd,
+      action: source,
+      originalEventId: pending.eventId,
+    });
+  }
+
   #emit(
     category: string,
     severity: 'critical' | 'high' | 'medium' | 'low' | 'ambient',
@@ -223,6 +360,86 @@ export class ClaudeAdapter implements Adapter {
       this.#unknownLineRatio = enrichment.unknownLineRatio;
     }
     return enrichment;
+  }
+
+  /**
+   * D19: pull-side discovery. Scans ~/.claude/projects transcript files for sessions
+   * that never sent a hook to this process (e.g. bridge was restarted while sessions
+   * were idle). Hooks remain source of truth for `state` and `pendingPermission` —
+   * the scan only registers unknown sessions and refreshes `lastEventAt`.
+   */
+  async #runScan(): Promise<void> {
+    const projectsDir = this.#deps.projectsDir ?? defaultProjectsDir();
+    if (!projectsDir) return;
+    const freshWindow = this.#cfg.scanFreshWindowMs ?? DEFAULT_SCAN_FRESH_WINDOW_MS;
+    const discovered = await scanClaudeSessions(projectsDir, freshWindow, this.#deps.logger);
+    // Desktop titles are cheap to read (~small JSONs) and apply even if no new
+    // jsonl session was discovered, so we fetch them regardless.
+    const desktopDir = this.#deps.claudeDesktopSessionsDir ?? defaultClaudeDesktopSessionsDir();
+    const desktopTitles = desktopDir
+      ? await readDesktopSessionTitles(desktopDir, this.#deps.logger)
+      : new Map<string, string>();
+
+    let changed = false;
+    // Apply desktop titles to sessions the bridge already knows about (from hooks
+    // or previous scans), even if they didn't appear in this scan pass.
+    for (const [sessionId, session] of this.#sessions) {
+      const desktopTitle = desktopTitles.get(sessionId);
+      if (desktopTitle && session.desktopTitle !== desktopTitle) {
+        session.desktopTitle = desktopTitle;
+        changed = true;
+      }
+    }
+    if (discovered.length === 0) {
+      if (changed) this.#notifySessionChange();
+      return;
+    }
+    for (const found of discovered) {
+      const existing = this.#sessions.get(found.sessionId);
+      if (!existing) {
+        const session: ClaudeSession = {
+          sessionId: found.sessionId,
+          cwd: found.cwd,
+          state: 'idle',
+          lastEventAt: found.mtimeMs,
+        };
+        const desktopTitle = desktopTitles.get(found.sessionId);
+        if (desktopTitle) session.desktopTitle = desktopTitle;
+        if (found.slug !== undefined) session.slug = found.slug;
+        if (found.title !== undefined) session.title = found.title;
+        if (found.lastPrompt !== undefined) session.lastPrompt = found.lastPrompt;
+        if (found.lastResponse !== undefined) session.lastResponse = found.lastResponse;
+        this.#sessions.set(found.sessionId, session);
+        changed = true;
+      } else {
+        // Hooks own live state; scan only refreshes lastEventAt and fills empty
+        // metadata fields (never overwrites what a hook already set). slug is
+        // scan-only (hooks don't emit it), so we refresh it whenever the scan
+        // finds a value — Claude Code may assign one mid-session.
+        if (found.mtimeMs > existing.lastEventAt) {
+          existing.lastEventAt = found.mtimeMs;
+          if (existing.state === 'stale') existing.state = 'idle';
+          changed = true;
+        }
+        if (found.slug !== undefined && existing.slug !== found.slug) {
+          existing.slug = found.slug;
+          changed = true;
+        }
+        if (existing.title === undefined && found.title !== undefined) {
+          existing.title = found.title;
+          changed = true;
+        }
+        if (existing.lastPrompt === undefined && found.lastPrompt !== undefined) {
+          existing.lastPrompt = found.lastPrompt;
+          changed = true;
+        }
+        if (existing.lastResponse === undefined && found.lastResponse !== undefined) {
+          existing.lastResponse = found.lastResponse;
+          changed = true;
+        }
+      }
+    }
+    if (changed) this.#notifySessionChange();
   }
 
   #loadFallbackFiles(): void {

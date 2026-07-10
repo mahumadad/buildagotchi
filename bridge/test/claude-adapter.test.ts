@@ -14,8 +14,21 @@ vi.mock('../src/adapters/claude-transcript.js', () => ({
   readTranscriptTail: vi.fn().mockReturnValue(null),
 }));
 
+vi.mock('../src/adapters/claude-jsonl-scanner.js', () => ({
+  scanClaudeSessions: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock('../src/adapters/claude-desktop-titles.js', () => ({
+  readDesktopSessionTitles: vi.fn().mockResolvedValue(new Map()),
+  defaultClaudeDesktopSessionsDir: vi.fn().mockReturnValue(''),
+}));
+
+import { readDesktopSessionTitles } from '../src/adapters/claude-desktop-titles.js';
+import { scanClaudeSessions } from '../src/adapters/claude-jsonl-scanner.js';
 import { readTranscriptTail } from '../src/adapters/claude-transcript.js';
 const mockReadTranscript = vi.mocked(readTranscriptTail);
+const mockScan = vi.mocked(scanClaudeSessions);
+const mockDesktopTitles = vi.mocked(readDesktopSessionTitles);
 
 function makeConfig(overrides?: Partial<ClaudeAdapterConfig>): ClaudeAdapterConfig {
   return {
@@ -54,6 +67,8 @@ describe('ClaudeAdapter', () => {
     stateDir = join(dir, 'claude-state');
     mkdirSync(stateDir, { recursive: true });
     mockReadTranscript.mockReturnValue(null);
+    mockScan.mockResolvedValue([]);
+    mockDesktopTitles.mockResolvedValue(new Map());
   });
 
   afterEach(async () => {
@@ -141,6 +156,104 @@ describe('ClaudeAdapter', () => {
 
     const session = adapter.sessions().get('s1');
     expect(session?.pendingPermission?.isCritical).toBe(true);
+    await adapter.stop();
+  });
+
+  // M13 tests 1-3: category split (S2.5.8). Not just isCritical on the session
+  // payload — the bus receives a different `category` so `stateRules` can map
+  // each to a distinct expression without special-casing the state machine.
+  it('M13-1: critical command emits category=permission_critical', async () => {
+    const bus = makeBus();
+    mockReadTranscript.mockReturnValue({ command: 'rm -rf /', unknownLineRatio: 0 });
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir, ['rm']));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent({
+      hook_event_name: 'Notification',
+      session_id: 's1',
+      notification_type: 'permission_prompt',
+      cwd: '/tmp/p',
+      transcript_path: '/fake/path',
+    });
+
+    expect(bus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'claude',
+        category: 'permission_critical',
+        severity: 'critical',
+        payload: expect.objectContaining({ isCritical: true }),
+      }),
+    );
+    await adapter.stop();
+  });
+
+  it('M13-2: benign command emits category=permission (not permission_critical)', async () => {
+    const bus = makeBus();
+    mockReadTranscript.mockReturnValue({ command: 'ls', unknownLineRatio: 0 });
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir, ['rm']));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent({
+      hook_event_name: 'Notification',
+      session_id: 's1',
+      notification_type: 'permission_prompt',
+      cwd: '/tmp/p',
+      transcript_path: '/fake/path',
+    });
+
+    expect(bus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'claude',
+        category: 'permission',
+        severity: 'critical',
+        payload: expect.objectContaining({ isCritical: false }),
+      }),
+    );
+    // And NOT the critical category.
+    expect(bus.publish).not.toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'permission_critical' }),
+    );
+    await adapter.stop();
+  });
+
+  it('M13-3: payload.isCritical is present in BOTH branches', async () => {
+    // Dashboard's `⚠` marker still reads payload.isCritical (dashboard.js:253).
+    // If we ever drop it, this test flags it.
+    const bus = makeBus();
+    mockReadTranscript.mockReturnValue({ command: 'sudo apt', unknownLineRatio: 0 });
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir, ['sudo']));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent({
+      hook_event_name: 'Notification',
+      session_id: 's-crit',
+      notification_type: 'permission_prompt',
+      cwd: '/tmp/p',
+      transcript_path: '/fake/path',
+    });
+    mockReadTranscript.mockReturnValue({ command: 'echo hi', unknownLineRatio: 0 });
+    adapter.handleHookEvent({
+      hook_event_name: 'Notification',
+      session_id: 's-benign',
+      notification_type: 'permission_prompt',
+      cwd: '/tmp/p',
+      transcript_path: '/fake/path',
+    });
+
+    const critCalls = (bus.publish as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([e]) => (e as { payload: { sessionId: string } }).payload.sessionId === 's-crit',
+    );
+    const benignCalls = (bus.publish as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([e]) => (e as { payload: { sessionId: string } }).payload.sessionId === 's-benign',
+    );
+    expect(critCalls[0]?.[0]).toMatchObject({
+      category: 'permission_critical',
+      payload: { isCritical: true },
+    });
+    expect(benignCalls[0]?.[0]).toMatchObject({
+      category: 'permission',
+      payload: { isCritical: false },
+    });
     await adapter.stop();
   });
 
@@ -320,6 +433,84 @@ describe('ClaudeAdapter', () => {
     await adapter.stop();
   });
 
+  it('PostToolUse resolves pendingPermission as approved', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent({
+      hook_event_name: 'Notification',
+      session_id: 's1',
+      notification_type: 'permission_prompt',
+      cwd: '/tmp',
+      command: 'ls',
+    });
+    expect(adapter.sessions().get('s1')?.pendingPermission).toBeDefined();
+
+    adapter.handleHookEvent({ hook_event_name: 'PostToolUse', session_id: 's1', cwd: '/tmp' });
+
+    expect(adapter.sessions().get('s1')?.pendingPermission).toBeUndefined();
+    expect(bus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'claude',
+        category: 'permission_resolved',
+        payload: expect.objectContaining({ action: 'approved' }),
+      }),
+    );
+    await adapter.stop();
+  });
+
+  it('UserPromptSubmit after Notification resolves pendingPermission as external', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent({
+      hook_event_name: 'Notification',
+      session_id: 's1',
+      notification_type: 'permission_prompt',
+      cwd: '/tmp',
+      command: 'ls',
+    });
+    adapter.handleHookEvent({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 's1',
+      cwd: '/tmp',
+      prompt: 'nevermind',
+    });
+
+    const session = adapter.sessions().get('s1');
+    expect(session?.pendingPermission).toBeUndefined();
+    expect(session?.state).toBe('working');
+    expect(bus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'permission_resolved',
+        payload: expect.objectContaining({ action: 'external' }),
+      }),
+    );
+    await adapter.stop();
+  });
+
+  it('Stop after Notification also clears pendingPermission', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent({
+      hook_event_name: 'Notification',
+      session_id: 's1',
+      notification_type: 'permission_prompt',
+      cwd: '/tmp',
+      command: 'ls',
+    });
+    adapter.handleHookEvent({ hook_event_name: 'Stop', session_id: 's1' });
+
+    const session = adapter.sessions().get('s1');
+    expect(session?.pendingPermission).toBeUndefined();
+    expect(session?.state).toBe('idle');
+    await adapter.stop();
+  });
+
   it('handleHookEvent is not idempotent — bus handles dedup', async () => {
     const bus = makeBus();
     const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
@@ -329,6 +520,134 @@ describe('ClaudeAdapter', () => {
     adapter.handleHookEvent({ hook_event_name: 'UserPromptSubmit', session_id: 's1', cwd: '/tmp' });
 
     expect(bus.publish).toHaveBeenCalledTimes(2);
+    await adapter.stop();
+  });
+
+  it('scan populates title/lastPrompt/lastResponse for newly discovered sessions', async () => {
+    const bus = makeBus();
+    mockScan.mockResolvedValue([
+      {
+        sessionId: 'scan-1',
+        cwd: '/some/proj',
+        filePath: '/fake/scan-1.jsonl',
+        mtimeMs: Date.now(),
+        title: 'Discovered title',
+        lastPrompt: 'Latest human message',
+        lastResponse: 'Latest assistant answer',
+      },
+    ]);
+
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    const changed = new Promise<void>((resolve) => {
+      adapter.onSessionChangeCallback = () => resolve();
+    });
+    await adapter.start(bus);
+    await changed;
+
+    const session = adapter.sessions().get('scan-1');
+    expect(session?.title).toBe('Discovered title');
+    expect(session?.lastPrompt).toBe('Latest human message');
+    expect(session?.lastResponse).toBe('Latest assistant answer');
+    await adapter.stop();
+  });
+
+  it('applies desktopTitle to a newly discovered session', async () => {
+    const bus = makeBus();
+    mockScan.mockResolvedValue([
+      {
+        sessionId: 'scan-1',
+        cwd: '/p',
+        filePath: '/fake/scan-1.jsonl',
+        mtimeMs: Date.now(),
+      },
+    ]);
+    mockDesktopTitles.mockResolvedValue(new Map([['scan-1', 'BUILDATGOCHI']]));
+
+    const adapter = new ClaudeAdapter(makeConfig(), {
+      ...makeDeps(stateDir),
+      claudeDesktopSessionsDir: '/fake/desktop',
+    });
+    const changed = new Promise<void>((resolve) => {
+      adapter.onSessionChangeCallback = () => resolve();
+    });
+    await adapter.start(bus);
+    await changed;
+
+    expect(adapter.sessions().get('scan-1')?.desktopTitle).toBe('BUILDATGOCHI');
+    await adapter.stop();
+  });
+
+  it('applies desktopTitle to a session already known from hooks (never overwrites)', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), {
+      ...makeDeps(stateDir),
+      claudeDesktopSessionsDir: '/fake/desktop',
+    });
+    await adapter.start(bus);
+
+    adapter.handleHookEvent({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 'hook-1',
+      cwd: '/tmp',
+      prompt: 'Hi',
+    });
+    expect(adapter.sessions().get('hook-1')?.desktopTitle).toBeUndefined();
+
+    // Next scan supplies a desktop title for that session.
+    mockDesktopTitles.mockResolvedValue(new Map([['hook-1', 'MY CHAT']]));
+    await adapter.stop();
+    await adapter.start(bus);
+    await new Promise((r) => setImmediate(r));
+
+    expect(adapter.sessions().get('hook-1')?.desktopTitle).toBe('MY CHAT');
+    await adapter.stop();
+  });
+
+  it('scan does not overwrite hook-derived title/lastPrompt/lastResponse', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 'hook-1',
+      cwd: '/tmp',
+      prompt: 'Hook prompt from human',
+    });
+    adapter.handleHookEvent({
+      hook_event_name: 'Stop',
+      session_id: 'hook-1',
+      last_assistant_message: 'Hook response',
+    });
+
+    const before = adapter.sessions().get('hook-1');
+    expect(before?.title).toBe('Hook prompt from human');
+    expect(before?.lastPrompt).toBe('Hook prompt from human');
+    expect(before?.lastResponse).toBe('Hook response');
+
+    // A subsequent scan returns different values for the same session; they
+    // must not overwrite the hook-derived ones (hooks are the source of truth).
+    mockScan.mockResolvedValue([
+      {
+        sessionId: 'hook-1',
+        cwd: '/tmp',
+        filePath: '/fake/hook-1.jsonl',
+        mtimeMs: Date.now() + 1000,
+        title: 'Scan title (should be ignored)',
+        lastPrompt: 'Scan prompt (should be ignored)',
+        lastResponse: 'Scan response (should be ignored)',
+      },
+    ]);
+    // Trigger a scan by restarting: start() runs one scan pass at boot.
+    await adapter.stop();
+    await adapter.start(bus);
+    // Give the void this.#runScan() microtask a chance to complete.
+    await new Promise((r) => setImmediate(r));
+
+    const after = adapter.sessions().get('hook-1');
+    expect(after?.title).toBe('Hook prompt from human');
+    expect(after?.lastPrompt).toBe('Hook prompt from human');
+    expect(after?.lastResponse).toBe('Hook response');
     await adapter.stop();
   });
 });

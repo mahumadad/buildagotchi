@@ -3,4 +3,20 @@ idleEmotion: HAPPY
 decoratorsBySeverity:
   critical:
     - sweat
-templates: {}
+
+# D28: mascot has no words. Its expression is face + sound. Every category has
+# `""` — the empty string means "clear the balloon" (S2.5.2), not "no template",
+# so the mascot ACTIVELY silences instead of inheriting whatever the previous
+# rule left behind.
+templates:
+  permission: ""
+  permission_critical: ""
+  permission_resolved: ""
+  response: ""
+  prompt: ""
+  subagent: ""
+  notification: ""
+  error: ""
+  session.idle: ""
+
+silentCategories: []

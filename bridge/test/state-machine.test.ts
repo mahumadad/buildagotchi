@@ -124,7 +124,9 @@ describe('StateMachine', () => {
     const d = deps();
     const sm = new StateMachine(RULES, d);
     sm.apply(null);
-    expect(sm.current()).toEqual({ emotion: 'NEUTRAL', decorators: [], leds: [] });
+    // S2.5.11: emitted ResolvedState always carries `balloon: string`. Empty on
+    // idle because there's nothing sticky in the history.
+    expect(sm.current()).toEqual({ emotion: 'NEUTRAL', decorators: [], leds: [], balloon: '' });
   });
 
   it('tracks time_in_critical_state_ratio over a moving window', () => {

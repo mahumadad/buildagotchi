@@ -4,6 +4,18 @@ decoratorsBySeverity:
   critical:
     - angry_mark
     - sweat
+
+# Curt, questioning, no project chrome. `response` shows just the text —
+# the critic doesn't care where it came from.
 templates:
-  permission.pending: "¿Estás seguro?"
-  permission.critical: "Eso parece peligroso: {command}"
+  permission: "¿Estás seguro?"
+  permission_critical: "Eso parece peligroso: {command}"
+  permission_resolved: ""
+  response: "{text}"
+  error: "Te lo dije: {message}"
+
+silentCategories:
+  - prompt
+  - subagent
+  - notification
+  - session.idle

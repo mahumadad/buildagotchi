@@ -33,11 +33,18 @@ const DurationOrInfinite = z.string().transform((val, ctx) => {
 
 const ModeSchema = z.enum(['NORMAL', 'FOCUS', 'SLEEP']);
 
+/**
+ * LED patterns supported by the `stack-chan` firmware
+ * (firmware/stackchan/led/led.ts:60-140). `pulse` was in the emulator but not
+ * in the firmware; declaring it as a rule would produce a config that only
+ * works on the browser (S2.5.16). Restricting the enum makes typos fail loudly
+ * at load time.
+ */
 const LedCommandSchema = z.object({
   row: z.enum(['left', 'right']),
   index: z.number().optional(),
   color: z.string(),
-  pattern: z.string(),
+  pattern: z.enum(['solid', 'blink', 'rainbow', 'off']),
 });
 
 const ResolvedStatePartialSchema = z.object({
@@ -74,6 +81,13 @@ const StateRuleSchema = z.object({
     .refine((v) => v.source !== undefined || v.category !== undefined || v.severity !== undefined, {
       message: 'stateRules entry match must set at least one of source/category/severity',
     }),
+  /**
+   * Lifespan of the balloon this rule produces. Sibling of `state`, NOT nested
+   * inside it (S2.5.12): the firmware doesn't need to know about policy —
+   * it only receives the resolved text. `undefined` maps to `transient` in the
+   * StateMachine, which is what nine out of ten rules want.
+   */
+  balloonPolicy: z.enum(['sticky', 'transient']).optional(),
   state: ResolvedStatePartialSchema,
 });
 
@@ -152,6 +166,13 @@ export const ConfigSchema = z.object({
         .default('companion'),
       ttsEnabled: z.boolean().default(false),
       templates: z.record(z.string()).optional(),
+      /**
+       * Max characters of the resolved balloon text (S2.5.4). Firmware wraps at
+       * ~60 on the 320×240 LCD; the emulator can afford more. Applied to the
+       * final interpolated string, so a huge `{text}` never eats the `[proj]`
+       * prefix (S2.5.13).
+       */
+      balloonMaxChars: z.number().int().positive().default(240),
     })
     .default({}),
   claude: z
@@ -170,6 +191,9 @@ export const ConfigSchema = z.object({
   dashboard: z
     .object({
       enabled: z.boolean().default(true),
+      /** M15: how many past balloons to keep for `GET /balloons` + the
+       *  Screen history panel. 10 is enough for a couple of minutes of chat. */
+      balloonHistorySize: z.number().int().nonnegative().default(10),
     })
     .default({}),
 });

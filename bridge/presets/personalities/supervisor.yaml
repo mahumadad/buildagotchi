@@ -3,6 +3,17 @@ idleEmotion: NEUTRAL
 decoratorsBySeverity:
   critical:
     - angry_mark
+
+# Formal, short. No emojis except the required ⚠.
 templates:
-  permission.pending: "Autorización requerida"
-  permission.critical: "⚠ {command}"
+  permission: "Autorización requerida"
+  permission_critical: "⚠ {command}"
+  permission_resolved: ""
+  response: "Respuesta lista"
+  error: "Error: {message}"
+
+silentCategories:
+  - prompt
+  - subagent
+  - notification
+  - session.idle

@@ -68,4 +68,90 @@ describe('ConfigSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  // M13 test 9: only the firmware's real patterns are accepted (S2.5.16).
+  // `pulse` was in the emulator; declaring it in a rule would produce a config
+  // that only works in the browser.
+  it('M13-9: rejects LED pattern outside {solid, blink, rainbow, off}', () => {
+    const result = ConfigSchema.safeParse({
+      schemaVersion: 1,
+      stateRules: [
+        {
+          match: { severity: 'critical' },
+          state: {
+            emotion: 'ANGRY',
+            leds: [{ row: 'right', color: 'red', pattern: 'pulse' }],
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('M13-9: accepts the four firmware-real patterns', () => {
+    for (const pattern of ['solid', 'blink', 'rainbow', 'off']) {
+      const result = ConfigSchema.safeParse({
+        schemaVersion: 1,
+        stateRules: [
+          {
+            match: { severity: 'critical' },
+            state: {
+              emotion: 'ANGRY',
+              leds: [{ row: 'right', color: 'red', pattern }],
+            },
+          },
+        ],
+      });
+      expect(result.success, `${pattern} should be valid`).toBe(true);
+    }
+  });
+
+  // M13 test 12: balloonPolicy is a sibling of `state`, NOT nested inside it
+  // (S2.5.12). The firmware receives `state` and doesn't understand policy.
+  it('M13-12: balloonPolicy lives outside state, and reaches the parsed StateRule', () => {
+    const result = ConfigSchema.safeParse({
+      schemaVersion: 1,
+      stateRules: [
+        {
+          match: { category: 'x' },
+          balloonPolicy: 'sticky',
+          state: { emotion: 'HAPPY' },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const rule = result.data.stateRules[0];
+      expect(rule).toBeDefined();
+      expect(rule?.balloonPolicy).toBe('sticky');
+      // And it's NOT smuggled into state.
+      expect((rule?.state as { balloonPolicy?: unknown }).balloonPolicy).toBeUndefined();
+    }
+  });
+
+  it('M13-12: balloonPolicy inside state is not a legal shape', () => {
+    // Zod doesn't currently reject unknown keys on `state`, so we assert on
+    // the observed behavior: the parsed shape has balloonPolicy inside state
+    // but the top-level field stays undefined. This test documents the
+    // invariant the StateMachine relies on: it reads `rule.balloonPolicy`,
+    // never `rule.state.balloonPolicy`.
+    const result = ConfigSchema.safeParse({
+      schemaVersion: 1,
+      stateRules: [
+        {
+          match: { category: 'x' },
+          state: { emotion: 'HAPPY', balloonPolicy: 'sticky' } as unknown as Record<
+            string,
+            unknown
+          >,
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const rule = result.data.stateRules[0];
+      // The wrong location has no effect: top-level is undefined.
+      expect(rule?.balloonPolicy).toBeUndefined();
+    }
+  });
 });

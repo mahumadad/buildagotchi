@@ -4,6 +4,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Buildagotchi Bridge</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.164.1/build/three.module.js"
+        }
+      }
+    </script>
     <link rel="stylesheet" href="/dashboard.css" />
   </head>
   <body>
@@ -13,8 +20,61 @@
     </header>
     <main class="app-grid">
       <aside class="sidebar">
+        <section class="panel sim-panel">
+          <h2>Simulation</h2>
+          <div class="sim-group">
+            <label>Mode</label>
+            <button id="sim-mode" class="sim-btn">Cycle mode</button>
+          </div>
+          <div class="sim-group">
+            <label>Claude</label>
+            <button id="sim-permission" class="sim-btn">Fake permission prompt</button>
+          </div>
+          <div class="sim-group">
+            <label>Replay</label>
+            <div class="sim-row">
+              <input id="replay-lastn" type="number" min="1" value="20" style="width: 4rem" title="How many past events" />
+              <button id="sim-replay" class="sim-btn">Replay today</button>
+            </div>
+            <div id="replay-result" class="sim-result"></div>
+          </div>
+          <div class="sim-group">
+            <label>Emotion</label>
+            <div class="sim-row" id="sim-emotions"></div>
+          </div>
+        </section>
         <section class="panel face-panel">
-          <div id="face" class="face" aria-live="polite">😐</div>
+          <div class="viewport-3d-wrap">
+            <canvas id="viewport-3d" class="viewport-3d"></canvas>
+          </div>
+          <canvas id="face-canvas" width="320" height="240" style="display:none;"></canvas>
+          <div class="device-controls">
+            <div class="device-touch">
+              <button class="device-touch-btn" data-touch="tap" title="Tap head">tap</button>
+              <button class="device-touch-btn" data-touch="swipe_fwd" title="Swipe forward">swipe ›</button>
+              <button class="device-touch-btn" data-touch="swipe_back" title="Swipe back">‹ swipe</button>
+              <button class="device-touch-btn" data-touch="hold" title="Hold 2s → sleep">hold</button>
+            </div>
+            <div class="device-buttons">
+              <button class="device-btn" data-btn="A" title="Button A · approve pending">A</button>
+              <button class="device-btn" data-btn="B" title="Button B · deny pending">B</button>
+              <button class="device-btn" data-btn="C" title="Button C · cycle mode">C</button>
+            </div>
+            <div class="device-servo">
+              <label class="servo-label">Pan <span id="servo-yaw-val">0</span>°</label>
+              <input id="servo-yaw" type="range" min="-90" max="90" value="0" class="servo-slider" />
+              <label class="servo-label">Tilt <span id="servo-pitch-val">0</span>°</label>
+              <input id="servo-pitch" type="range" min="-30" max="30" value="0" class="servo-slider" />
+            </div>
+            <div class="device-volume">
+              <button id="mute-btn" class="device-mute" title="Mute/unmute">🔊</button>
+              <input id="volume-slider" type="range" min="0" max="100" value="60" class="volume-slider" title="Speaker volume" />
+              <div class="led-row-inline">
+                <div class="led-column" id="leds-left"></div>
+                <div class="led-column" id="leds-right"></div>
+              </div>
+            </div>
+          </div>
           <div id="state-mode" class="state-mode">NORMAL</div>
         </section>
         <section class="panel health-panel">
@@ -24,6 +84,18 @@
             <span>Transport:</span>
             <span id="health-transport-status" class="badge">unknown</span>
           </div>
+        </section>
+        <section class="panel attention-panel">
+          <h2>Attention</h2>
+          <div class="attention-mode" id="attention-mode">
+            <span class="attention-mode-badge" id="attention-mode-badge">NORMAL</span>
+            <span class="attention-mode-legend" id="attention-mode-legend">todo pasa</span>
+          </div>
+          <div class="attention-active" id="attention-active">
+            <span class="attention-empty">nothing active</span>
+          </div>
+          <div class="attention-queue-header" id="attention-queue-header">Queue (0)</div>
+          <ul class="attention-queue" id="attention-queue"></ul>
         </section>
       </aside>
       <section class="content">
@@ -36,6 +108,12 @@
         <section class="panel events-panel">
           <h2>Events</h2>
           <ul id="events-list" class="events-list"></ul>
+        </section>
+        <section class="panel history-panel">
+          <h2>Screen history</h2>
+          <ul id="balloon-history" class="balloon-history">
+            <li class="empty">nothing yet</li>
+          </ul>
         </section>
       </section>
     </main>

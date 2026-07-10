@@ -308,14 +308,14 @@ describe('Phase 2 integration', () => {
   // Test 9: Personality balloon in state
   it('personality balloon appears for permission event category', async () => {
     await setup({ preset: 'companion' });
-    // The companion preset has template: "permission.pending": "{project}: permiso pendiente"
-    // But the state machine only sees the event category, not "permission.pending".
+    // The companion preset has template: "permission": "{project}: {command}"
+    // But the state machine only sees the event category, not "permission".
     // The event from the adapter has category: 'permission'.
     // Let's verify the personality manager is wired by checking a different way.
     const preset = loadPreset('companion');
     const pm = new PersonalityManager(preset);
-    const balloon = pm.balloon('permission.pending', { project: 'myapp' });
-    expect(balloon).toBe('myapp: permiso pendiente');
+    const balloon = pm.balloon('permission', { project: 'myapp' });
+    expect(balloon).toBe('myapp: {command}');
   });
 
   // Test 10: Hot-reload personality

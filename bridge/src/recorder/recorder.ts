@@ -36,7 +36,13 @@ function expandHome(dir: string): string {
   return dir.startsWith('~') ? join(homedir(), dir.slice(1)) : dir;
 }
 
-function localDateString(ts: number): string {
+/**
+ * Local-time day string used in ndjson filenames. Exposed so callers looking
+ * for "today's file" (M16 replay) match the recorder's own rotation logic —
+ * `new Date().toISOString().slice(0,10)` would drift by up to 24h in
+ * non-UTC timezones after the recorder rotates for the day.
+ */
+export function localDateString(ts: number): string {
   const d = new Date(ts);
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -65,6 +71,12 @@ export class EventRecorder {
   /** Global flag (§5.5): while true, every recorded line is tagged replay: true. */
   setReplayMode(enabled: boolean): void {
     this.#replayMode = enabled;
+  }
+
+  /** Absolute path of the recorder directory. Read-only; used by the server
+   *  to resolve `POST /replay` file params against it (M16). */
+  get dir(): string {
+    return this.#dir;
   }
 
   record(rawLine: RecorderLine): void {
