@@ -115,6 +115,28 @@ stateRules:
       sound: approve
       balloon: ""  # explicit clear for the "resolved" flash
 
+  # ── Presión de contexto ──────────────────────────────────────────────────
+  # La ventana se declara en `claude.contextWindowTokens`. `calm` llega cuando
+  # la sesión compacta: retira al evento anterior con `resolvesEventId` y limpia.
+  - match: { source: claude, category: context_high }
+    state:
+      emotion: SAD
+      leds: [{ row: right, color: amber, pattern: blink }]
+      sound: notification
+      balloon: "{project}: contexto {pct}% — va a compactar"
+
+  - match: { source: claude, category: context_warn }
+    state:
+      emotion: DOUBTFUL
+      leds: [{ row: right, color: amber, pattern: solid }]
+      balloon: "{project}: contexto {pct}%"
+
+  - match: { source: claude, category: context_calm }
+    state:
+      emotion: HAPPY
+      leds: [{ row: right, color: green, pattern: solid }]
+      balloon: ""  # compactó: la presión pasó
+
   # ── Ciclo de trabajo de Claude ───────────────────────────────────────────
   # `response` is sticky (S2.5.2): the assistant's answer survives idle, so the
   # user can walk away and come back and still see what was said. Every other
@@ -212,6 +234,13 @@ claude:
   transcriptReadEnabled: true        # one-shot transcript reads for enrichment
   unknownLineThreshold: 5            # % unknown lines → DEGRADED
   unknownLineBrokenThreshold: 20     # % unknown lines → BROKEN
+
+  # Context pressure → face. The window is DECLARED, never inferred: no field in
+  # the transcript reports it. Set it to your model's real window, or the
+  # percentages the robot reacts to are fiction.
+  contextWindowTokens: 200000
+  contextWarnAt: 0.7                 # DOUBTFUL: the session is filling up
+  contextHighAt: 0.9                 # SAD: compaction is imminent
 
 # MCP server (D26). Exposed as stdio server for Claude Code.
 mcp:

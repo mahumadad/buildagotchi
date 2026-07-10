@@ -14,7 +14,8 @@ import { ConfigLoader } from './config/loader.js';
 import { AttentionManager } from './core/attention.js';
 import { BalloonHistory } from './core/balloon-history.js';
 import { EventBus } from './core/bus.js';
-import type { Adapter, Event } from './core/events.js';
+import { ContextPressureMonitor } from './core/context-pressure.js';
+import { type Adapter, type Event, newEvent } from './core/events.js';
 import { registerShutdown } from './core/lifecycle.js';
 import { StateMachine } from './core/state-machine.js';
 import { TokenStats } from './core/token-stats.js';
@@ -96,7 +97,13 @@ async function main(): Promise<void> {
         if (typeof out === 'number') tokenStats.addOutput(out);
         const ctx = e.payload.contextTokens;
         const sid = e.payload.sessionId;
-        if (typeof ctx === 'number' && typeof sid === 'string') tokenStats.setContext(sid, ctx);
+        if (typeof ctx === 'number' && typeof sid === 'string') {
+          tokenStats.setContext(sid, ctx);
+          // `cwd` rides along so the pressure event can name the project. Without
+          // it the balloon rendered as ": contexto 91%" — the template's
+          // `{project}` resolves from `cwd`, not from the session id.
+          contextPressure.observe(sid, ctx, typeof e.payload.cwd === 'string' ? e.payload.cwd : '');
+        }
 
         attentionManager.push(e);
         server.notifyEvent(e);
@@ -128,6 +135,37 @@ async function main(): Promise<void> {
 
   // `today` survives a restart; `sinceStart` does not, by definition.
   const tokenStats = new TokenStats({ path: join(platform.dataDir(), 'token-stats.json') });
+
+  // Context pressure becomes events like any other source (D3): the state rules
+  // decide what a full window looks like on the face, not this wiring.
+  const pressureEventBySession = new Map<string, string>();
+  const contextPressure = new ContextPressureMonitor(
+    {
+      windowTokens: config.claude.contextWindowTokens,
+      warnAt: config.claude.contextWarnAt,
+      highAt: config.claude.contextHighAt,
+    },
+    {
+      onLevelChange: (level, ctx) => {
+        const previous = pressureEventBySession.get(ctx.sessionId);
+        const event = newEvent({
+          source: 'claude',
+          category: `context_${level}`,
+          severity: level === 'high' ? 'high' : level === 'warn' ? 'medium' : 'ambient',
+          payload: {
+            sessionId: ctx.sessionId,
+            cwd: ctx.cwd,
+            pct: Math.round(ctx.pct * 100),
+            ...(previous !== undefined ? { resolvesEventId: previous } : {}),
+          },
+        });
+        // `calm` retires its predecessor and leaves nothing behind to retire.
+        if (level === 'calm') pressureEventBySession.delete(ctx.sessionId);
+        else pressureEventBySession.set(ctx.sessionId, event.id);
+        bus.publish(event);
+      },
+    },
+  );
 
   const stateMachine = new StateMachine(
     config.stateRules,
@@ -198,6 +236,11 @@ async function main(): Promise<void> {
       autoMuteAfter: next.dedup.autoMuteAfter,
     });
     attentionManager.setConfig(next.attentionManager);
+    contextPressure.setConfig({
+      windowTokens: next.claude.contextWindowTokens,
+      warnAt: next.claude.contextWarnAt,
+      highAt: next.claude.contextHighAt,
+    });
     stateMachine.setRules(next.stateRules);
     // Hot-reload personality
     const nextPreset = loadPreset(next.personality.preset);
@@ -245,7 +288,11 @@ async function main(): Promise<void> {
     // A session that died leaves no context behind — same invariant the
     // permission deadlock taught us (DEBT: #retireSession).
     for (const id of Object.keys(tokenStats.snapshot().context.bySession)) {
-      if (!sessions.has(id)) tokenStats.forgetSession(id);
+      if (!sessions.has(id)) {
+        tokenStats.forgetSession(id);
+        contextPressure.forget(id);
+        pressureEventBySession.delete(id);
+      }
     }
     server.notifySession(Object.fromEntries(sessions));
   };

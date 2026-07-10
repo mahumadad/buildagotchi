@@ -181,6 +181,11 @@ export const ConfigSchema = z.object({
       transcriptReadEnabled: z.boolean().default(true),
       unknownLineThreshold: z.number().default(5),
       unknownLineBrokenThreshold: z.number().default(20),
+      // Declared, not inferred: no transcript field reports the model's window,
+      // and a percentage against a guessed limit would be an invented number.
+      contextWindowTokens: z.number().default(200_000),
+      contextWarnAt: z.number().min(0).max(1).default(0.7),
+      contextHighAt: z.number().min(0).max(1).default(0.9),
     })
     .default({}),
   mcp: z
