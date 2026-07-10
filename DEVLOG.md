@@ -398,6 +398,62 @@ datos reales, o sin una decisión tuya.
 
 ---
 
+## 2026-07-10 — Life Stats (espejo honesto)
+
+### Qué se hizo
+
+Feature completa: tres métricas persistentes (approvals/denials, fromHead%,
+racha de días laborales) en `LifeStats`, con hito edge-triggered, página LIFE
+en la vista stats del robot, y panel Life en el dashboard.
+
+- Spec: `docs/superpowers/specs/2026-07-10-life-stats-design.md` (rev 2, post-council)
+- Plan: `docs/superpowers/plans/2026-07-10-life-stats.md` (6 tareas TDD)
+- Council (Fable): 8 hallazgos, 2 bloqueantes resueltos antes de implementar
+  - C1: conducto de approvals sesgado → dos caminos explícitos
+  - C2: demo/sim/replay persisten datos falsos → flag `enabled` + replay guard
+  - C3: velocidad incluye esperas humanas → diferida a v2 (D-15)
+  - C4: tabla de transiciones para fin de semana
+
+### Archivos nuevos
+
+- `bridge/src/core/workday.ts` — `isWorkday`, `workdayGap` puros
+- `bridge/src/core/life-stats.ts` — clase `LifeStats` con JSON persistence
+- `bridge/test/workday.test.ts` (11 tests)
+- `bridge/test/life-stats.test.ts` (19 tests)
+
+### Archivos modificados
+
+- `bridge/src/index.ts` — wiring + milestone + replay guard
+- `bridge/src/server/server.ts` — `recordResolution` en dashboard + `/stats.life`
+- `bridge/src/config/schema.ts` — `milestoneStreakDays`
+- `bridge/src/core/screen-view.ts` — `PAGES.stats` 2→3
+- `bridge/src/server/public/screen.mjs` — página LIFE (array dispatch)
+- `bridge/src/server/public/index.html` — panel Life
+- `bridge/src/server/public/dashboard.js` — render life data
+- `bridge/src/server/public/dashboard.css` — estilos life panel
+- `config.example.yaml` — stateRule `life_milestone` + `milestoneStreakDays`
+
+### Verificación
+
+- 503 tests verdes (30 nuevos para workday + life-stats + screen)
+- Typecheck `src` + `test` limpio
+- Dashboard: panel Life renderiza (verificación visual parcial — el servidor
+  corriendo no tenía el backend cargado, pero el DOM es correcto)
+- Verificación E2E completa requiere reinicio del bridge
+
+### Decisiones
+
+- **Velocidad diferida** (D-15): no se puede medir honestamente sin
+  `pendingPromptAt` y sin excluir turnos con permisos pendientes.
+- **Feriados no manejados**: aceptable para v1; `isWorkday` está extraído como
+  función pura para que añadir feriados sea un cambio local.
+- **Replay guard**: `!e.payload.replayedFrom` en ambos bloques de `index.ts`;
+  encontrado por el reviewer de Task 3, corregido en commit separado.
+
+**Commits**: `15dfc7e`..`3d5128c` (6 commits)
+
+---
+
 ## Pendientes inmediatos
 
 - [ ] Push a GitHub (20 commits ahead de `origin/main`)

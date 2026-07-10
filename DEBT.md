@@ -153,6 +153,28 @@ seguridad, no la estética.
 
 ---
 
+## D-15 — velocity metric deferred (C3)
+
+**Dónde**: no implementado — sería `bridge/src/core/life-stats.ts`.
+
+**Por qué no explotó**: no existe. Es una métrica que el council (C3, 2026-07-10)
+demostró que no se puede construir honestamente con los datos actuales.
+
+**Qué la haría explotar**: implementarla sin resolver (a) que `prompt→Stop`
+incluye la espera humana en permisos, y (b) que `{sumMs,count}` acumulado de por
+vida no es una media móvil — deja de moverse con volumen.
+
+**Qué necesita**: (a) campo `pendingPromptAt` en `ClaudeSession`, (b) exclusión
+de turnos con permiso pendiente en medio, (c) ventana deslizante o exponencial
+en vez de acumulado.
+
+**Costo**: medio. Requiere cambios en `ClaudeAdapter` (nuevo campo) y un nuevo
+cálculo en `LifeStats`.
+
+**Status**: diferido por diseño — no es un bug, no está olvidado.
+
+---
+
 ## Resueltas
 
 Se dejan acá con la fecha para no re-descubrirlas.
