@@ -42,9 +42,7 @@ describe('PersonalityManager', () => {
   it('interpolates balloon templates with the given context', () => {
     const preset = loadPreset('companion', PRESETS_DIR);
     const manager = new PersonalityManager(preset);
-    expect(manager.balloon('permission', { project: 'myapp' })).toBe(
-      'myapp: {command}',
-    );
+    expect(manager.balloon('permission', { project: 'myapp' })).toBe('myapp: {command}');
   });
 
   it('leaves unresolved placeholders untouched when a variable is missing', () => {
@@ -80,7 +78,7 @@ describe('PersonalityManager', () => {
   it('prefers custom templates over the preset templates', () => {
     const preset = loadPreset('companion', PRESETS_DIR);
     const manager = new PersonalityManager(preset, {
-      'permission': 'custom override',
+      permission: 'custom override',
     });
     expect(manager.balloon('permission', { project: 'myapp' })).toBe('custom override');
   });
@@ -89,13 +87,9 @@ describe('PersonalityManager', () => {
     const companion = loadPreset('companion', PRESETS_DIR);
     const supervisor = loadPreset('supervisor', PRESETS_DIR);
     const manager = new PersonalityManager(companion);
-    expect(manager.balloon('permission', { project: 'myapp' })).toBe(
-      'myapp: {command}',
-    );
+    expect(manager.balloon('permission', { project: 'myapp' })).toBe('myapp: {command}');
     manager.reload(supervisor);
-    expect(manager.balloon('permission', { project: 'myapp' })).toBe(
-      'Autorización requerida',
-    );
+    expect(manager.balloon('permission', { project: 'myapp' })).toBe('Autorización requerida');
     expect(manager.presetName()).toBe('supervisor');
   });
 });

@@ -42,7 +42,8 @@ async function setupServer(opts: { simulate: boolean; recorderDir: string }) {
   const bus = new EventBus(metrics, {
     // Match index.ts: accepted events are appended to the recorder. Without
     // this the M16-5 assertion has no source of truth to look up.
-    onAccepted: (e) => recorder.record({ line_type: 'event', ts: Date.now(), context: {}, data: e }),
+    onAccepted: (e) =>
+      recorder.record({ line_type: 'event', ts: Date.now(), context: {}, data: e }),
     onOutcome: () => {},
   });
   const attentionManager = new AttentionManager(

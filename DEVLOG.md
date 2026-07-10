@@ -233,24 +233,100 @@ Registrado como D-06 en DEBT.md con el fix propuesto — el mismo
 
 ---
 
+---
+
+## 2026-07-10 — Día 4: saldar la deuda (391 tests)
+
+Sesión secuencial. La pregunta que la abrió fue "¿qué queda por arreglar?", y la
+respuesta honesta empezó verificando si el bug de ayer era un ejemplar o un caso.
+Era un ejemplar.
+
+### P0 — El permiso que sobrevive a su sesión
+
+Ayer arreglé el camino del hook `PostToolUse` y escribí en este mismo archivo que
+Fase 2 *"arregló una puerta y dejó la otra abierta"*. Hice exactamente lo mismo.
+
+`SessionEnd` y `#cleanStale` borraban la sesión sin liberar su permiso.
+Reproducido en vivo: cerrar el chat con un permiso pendiente dejaba al robot con
+`⚠ sudo rm -rf /` para una sesión que ya no existía.
+
+El fix no fueron tres llamadas más a `#autoResolvePending`, sino `#retireSession()`
+como **único** camino fuera de `#sessions`. Y un test del **invariante**, no de los
+casos: *tras cualquier evento del adapter, ningún permiso activo o encolado
+pertenece a una sesión que no existe*. Ocho tests terminan en la misma aserción.
+Una quinta puerta falla ahí, no en el escritorio.
+
+### D-06 — La respuesta llegaba 30 segundos tarde
+
+`prompt` y `response` son ambos `ambient`, así que el response se encolaba detrás
+del prompt de su propia sesión y solo aparecía cuando el prompt expiraba. Para un
+dispositivo *ambient* eso es al revés: mirás al robot para saber si Claude
+terminó. Un prompt deja de significar algo cuando llega su respuesta; ahora lo
+retira con el `resolvesEventId` de ayer. **De ~30 s a inmediato**, cronometrado.
+
+### D-01 — `statesEqual` con `JSON.stringify`
+
+El orden de claves generaba transiciones espurias: un `state_change` que miente,
+`face_changes_total` inflado, un broadcast SSE redundante, un duplicado en
+`BalloonHistory`. Nunca disparó porque ningún adapter emite `direction`; los de
+Fase 3 sí. Comparación campo a campo.
+
+El fix rompió un test de M12a, y ahí está lo interesante: **ese test dependía del
+bug**. Aplicaba una regla silenciosa cuyo estado resuelto era idéntico al inicial
+y afirmaba que algo se emitía. Solo pasaba porque el orden de claves difería.
+
+### D-02 — 67 MB para leer 50 líneas
+
+`readTranscriptTail` hacía `readFileSync` del transcript completo. Medido contra
+un archivo real de 67 MB: **92.8 ms → 0.5 ms**, salida byte-idéntica. Corría
+dentro de un hook con presupuesto de 2 s (`curl -m 2`), en el mismo hilo que el
+bus. Nuevo `tail-reader.ts` con ventana que crece de 256 KB a 8 MB — una línea
+más larga que la ventana devolvía nada, y "raro" no es lo mismo que "correcto".
+
+Escribiéndolo metí un bug y lo saqué: con la ventana empezando a mitad de archivo
+y sin ningún `\n`, `indexOf` da -1 y `slice(0)` devuelve el fragmento como si
+fuera una línea. Un fragmento parsea como línea desconocida, y `unknownLineRatio`
+determina el health del adapter: una línea suficientemente grande lo habría
+reportado BROKEN.
+
+### D-04 / D-05 — El emulador no puede mentir
+
+`rainbow` (legal en el enum, porque el firmware lo tiene) se pintaba como sólido.
+Y `pattern: 'off'` **encendía** el LED, porque `renderLeds` agregaba la clase `on`
+antes de mirar el pattern. Las dos son divergencias emulador↔firmware, que es
+precisamente lo que S2.5.1 existe para evitar. `dashboard.js` queda limpio de
+biome por primera vez.
+
+### Balance
+
+**391/391 tests** (357 → 391). Seis commits, uno por arreglo. `tsc` y `biome`
+limpios. Todo verificado contra el bridge corriendo, no solo en test.
+
+Dos de los tres bugs graves de ayer y hoy salieron del **checklist manual**, no de
+la suite. La costura entre módulos correctos es donde vive este sistema y donde
+menos cobertura tenía. Los tres tests nuevos de cadena (`permission-resolve-chain`,
+`permission-session-invariant`, `prompt-response-chain`) instancian el adapter y
+el bus **reales**: mockear cualquiera de los dos reintroduce el punto ciego.
+
+Enmendé un commit: corrí `biome --write` desde la raíz del repo con `--prefix`,
+agarró otra config y reformateó tres archivos con tabs y comillas dobles. Se
+corrige corriendo biome desde `bridge/`.
+
+---
+
 ## Pendientes inmediatos
 
-- [ ] Push a GitHub (20 commits ahead de `origin/main`)
-- [ ] Verificación manual de Fase 2.5 (§8.1), lo que resta:
-      - ✅ Paso 5: aprobar desde el chat → encontró el deadlock, arreglado
-      - ✅ Paso 11: crítico preempta `response`; al resolver no vuelve, pero está
-        en Screen history (decisión de producto, §12)
-      - [ ] Paso 6: bajar `ttlBySeverity.critical` a 5 s y ver un `permission`
-        benigno expirar y limpiarse solo. **Ojo**: con el `ttlOverride` infinito
-        de S2.5.8 el permiso benigno tampoco expira, así que el paso está mal
-        escrito — hay que quitar el override para ejercitarlo, o reescribirlo
-        contra otra categoría `transient` con TTL finito.
-- [ ] D-06: el lag de 30 s del `response` (DEBT.md)
+- [ ] Push a GitHub (26 commits ahead de `origin/main`)
+- [ ] Paso 6 del checklist §8.1 — reescrito, aún sin ejecutar. Requiere quitar el
+      `ttlOverride` de `permission` **y** bajar `ttlBySeverity.critical`, porque
+      S2.5.8 le dio TTL infinito a las dos categorías de permiso. Revertir el
+      config al terminar.
+- [ ] Fase 3 (Calendar → GitHub → Jira). El OAuth de los MCP necesita una sesión
+      interactiva.
 - [ ] Fase 0: ejecutar cuando llegue el hardware (NOTES.md tiene el template)
 - [ ] Fase 1B: BLE real con noble + CoreS3
 - [ ] Gate 1: 3 semanas de uso real del MVP (criterios en ROADMAP.md)
 
-Deuda técnica registrada en [DEBT.md](DEBT.md) — seis entradas, ninguna
-bloqueante. Las dos que más importan: D-01 (`statesEqual` con `JSON.stringify`),
-que explota cuando Fase 3 empiece a emitir `direction`; y D-06, que no es
-cosmético — cambia cuándo la cara refleja el estado real.
+[DEBT.md](DEBT.md) queda con **una sola entrada abierta**, D-03, y no es un bug:
+es la decisión de qué hacer con `pulse` en Fase 1B. Las cinco restantes están en
+"Resueltas" con su lección.

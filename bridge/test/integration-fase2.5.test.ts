@@ -2,10 +2,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
+import { ConfigSchema } from '../src/config/schema.js';
 import type { ActiveAttention } from '../src/core/attention.js';
 import { BalloonHistory } from '../src/core/balloon-history.js';
-import { ConfigSchema } from '../src/config/schema.js';
-import { type Event, newEvent, type ResolvedState } from '../src/core/events.js';
+import { type Event, type ResolvedState, newEvent } from '../src/core/events.js';
 import { severityPassesMode } from '../src/core/modes.js';
 import { StateMachine, type StateMachineDeps } from '../src/core/state-machine.js';
 import { PersonalityManager, type PersonalityPreset } from '../src/personality/personality.js';
@@ -56,9 +56,8 @@ function makeSm(personalityName = 'companion'): {
 }
 
 function claudeEvent(category: string, payload: Record<string, unknown>): Event {
-  const severity = category === 'permission' || category === 'permission_critical'
-    ? 'critical'
-    : 'ambient';
+  const severity =
+    category === 'permission' || category === 'permission_critical' ? 'critical' : 'ambient';
   return newEvent({ source: 'claude', category, severity, payload });
 }
 

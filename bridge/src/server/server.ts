@@ -1,15 +1,21 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, resolve, sep as pathSep } from 'node:path';
+import { join, sep as pathSep, resolve } from 'node:path';
 import { z } from 'zod';
-import type { EventBus } from '../core/bus.js';
-import { replay, type ReplayResult } from '../recorder/replay.js';
 import type { ClaudeAdapter } from '../adapters/claude-adapter.js';
 import type { AttentionManager } from '../core/attention.js';
 import type { BalloonHistory } from '../core/balloon-history.js';
+import type { EventBus } from '../core/bus.js';
 import {
   type AdapterHealth,
   EMOTIONS,
@@ -23,6 +29,7 @@ import type { StateMachine } from '../core/state-machine.js';
 import { TOKEN_ACCOUNT, TOKEN_SERVICE } from '../platform/platform.js';
 import type { Platform } from '../platform/platform.js';
 import { type EventRecorder, localDateString } from '../recorder/recorder.js';
+import { type ReplayResult, replay } from '../recorder/replay.js';
 import type { Metrics } from './metrics.js';
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1MB (SPEC-IMPL-FASE-1A §5.3)
@@ -442,9 +449,8 @@ export class BridgeServer {
       return;
     }
 
-    const lastN = typeof parsed.lastN === 'number' && parsed.lastN > 0
-      ? Math.floor(parsed.lastN)
-      : undefined;
+    const lastN =
+      typeof parsed.lastN === 'number' && parsed.lastN > 0 ? Math.floor(parsed.lastN) : undefined;
     const instant = parsed.instant === true;
 
     // Setting replay mode on the recorder tags every re-recorded line so the

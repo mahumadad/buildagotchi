@@ -553,7 +553,7 @@ el symlink.)*
 | 3 | Esperar 60 s sin actividad | el balloon **sigue** (política `sticky`) |
 | 4 | `Fake permission prompt` con `rm -rf` | `⚠ rm -rf`, LED izq rojo blink, DOUBTFUL, sonido `permission` |
 | 5 | Aprobar **desde el chat de Claude**, no del dashboard | `PostToolUse` → balloon limpio, LED verde, sonido `approve` |
-| 6 | **Bajar el TTL crítico a 5 s y disparar un permiso benigno** | a los 5 s el balloon se limpia solo *(el bug de §1.1, ahora cubierto)* |
+| 6 | **Quitar el `ttlOverride` de `permission`, bajar `ttlBySeverity.critical` a 5 s, disparar un permiso benigno** | a los 5 s el balloon se limpia solo *(el bug de §1.1, ahora cubierto)*. **Ojo**: sin quitar el override el permiso benigno tampoco expira — el paso decía "bajar el TTL" a secas y era irreproducible, porque S2.5.8 le dio TTL infinito a las DOS categorías de permiso. Revertir el config al terminar |
 | 7 | `Cycle mode` → FOCUS, luego una respuesta | balloon **no** cambia (ambient filtrado); la card **sí** |
 | 8 | En FOCUS, disparar un permiso | pasa (critical), balloon cambia |
 | 9 | `Cycle mode` → SLEEP con un permiso activo | pasa (critical); un `error` de severity `high` no |
