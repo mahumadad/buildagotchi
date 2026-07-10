@@ -7,25 +7,45 @@ GitHub, browser errors, Jira, calendar — through expressive faces, servo
 movement, LEDs and voice, and exposes an open MCP surface so any agent can push
 notifications and drive the hardware.
 
-> **Status: work in progress.** Nothing runs yet. This repository currently
-> contains the architectural documentation while Phase 0 (hardware discovery)
-> is pending. See [ROADMAP.md](ROADMAP.md) for the phased plan and validation
-> gates.
+> **Status: the bridge runs; the robot has not arrived.**
+>
+> The CoreS3 kit is still in the post, so Phase 0 (hardware discovery) and
+> Phase 1B (real BLE) are blocked. Everything else was built anyway, against a
+> simulator — see [Running without the hardware](#running-without-the-hardware).
+>
+> | | |
+> |---|---|
+> | **Done** | Phase 1A (bridge foundation), Phase 2 (Claude Code MVP), Phase 2.5 (server-authoritative display + observability) |
+> | **Runs today** | `bridge --simulate` + a web emulator at `localhost:1780`, driven by real Claude Code hooks |
+> | **391 tests** | `npm test` in `bridge/`. Green. |
+> | **Not built** | BLE transport (stub), Metabolic State (Phase 4), voice (Phase 5), Chrome/Jira/GitHub/Calendar adapters (Phases 3, 6) |
+>
+> [ROADMAP.md](ROADMAP.md) has the phased plan and the validation gates.
+> [DEVLOG.md](DEVLOG.md) has what actually happened, including the bugs.
 
 ## How it works
 
 The hardware acts as the display; all the logic lives in a Node/TypeScript
 **bridge** running as a background daemon on the host machine. Source adapters
-(Claude Code, GitHub, Chrome CDP, Jira, Google/Atlassian Calendar, LLM
-providers) emit normalized `Event` objects onto an event bus. An **Attention
-Manager** arbitrates concurrent events by priority and TTL. A **Cognitive
-Load** engine derives a 0–100 background mood score from current inputs, with
-temporal decay. The bridge resolves everything into a single state
-(`{emotion, decorators, LEDs, sound, servos}`) and pushes it to the firmware
-over BLE (Nordic UART). The firmware is deliberately thin — it renders what it
-is told and reports touch/button input back. The whole system is observable:
-a Prometheus-style `/metrics` endpoint, an append-only event log with replay,
-and a local dashboard.
+(Claude Code today; GitHub, Chrome CDP, Jira, Calendar, LLM providers planned)
+emit normalized `Event` objects onto an event bus. An **Attention Manager**
+arbitrates concurrent events by priority and TTL. A **Metabolic State** engine
+will derive a 0–100 background mood score from current inputs with temporal
+decay (Phase 4; the seam is in place, the engine is not).
+
+The bridge resolves everything into a single state
+(`{emotion, decorators, LEDs, sound, servos, balloon}`) and pushes it to the
+firmware over BLE (Nordic UART). **The firmware decides nothing.** It renders
+what it is told and reports touch and button input back. That constraint is
+load-bearing: it is why display policy lives on the server
+([S2.5.1](DECISIONS.md)), and why the same `ResolvedState` drives both the robot
+and the emulator.
+
+The whole system is observable: a Prometheus-style `/metrics` endpoint, an
+append-only event log with replay, and a local dashboard.
+
+> The BLE transport is currently a stub that logs what it would have sent.
+> Everything upstream of it is real.
 
 ## Planned capabilities
 
@@ -47,6 +67,74 @@ and a local dashboard.
   event history, adapter health, BLE link status, `/metrics` for scraping,
   and replay controls to re-run a past event log against the current state
   machine.
+
+## Running without the hardware
+
+The CoreS3 kit was ordered before a line of code was written, and it still
+hasn't arrived. Waiting for it would have cost weeks. Instead the bridge got a
+simulator on day one ([D11](DECISIONS.md)), and three phases were built,
+reviewed and debugged against it.
+
+```bash
+cd bridge
+npm install
+cp ../config.example.yaml ../config.yaml          # config.yaml is gitignored (D25)
+
+npx tsx src/cli.ts init --hooks                   # Keychain token + Claude Code hooks
+npx tsx src/index.ts --simulate --config ../config.yaml
+# open http://localhost:1780
+```
+
+`init --hooks` is what wires the thing to your real Claude Code sessions: it
+mints an API token into the macOS Keychain and installs the hook script into
+`~/.claude/settings.json`. Skip it and the emulator still runs — you just drive
+it with the `/sim/*` endpoints instead of with your actual work.
+
+What you get is not a mock. It is the real bridge — the real adapters, event
+bus, Attention Manager and state machine — with the BLE transport swapped for a
+stub, plus a web emulator that renders the `ResolvedState` the firmware would
+have received:
+
+- **The robot's face**, in a 3D viewport: emotions, decorators, servo pan/tilt.
+- **The 320×240 LCD**, including the speech balloon, wrapped and truncated the
+  way the firmware will do it.
+- **The six LEDs**, with the firmware's real patterns (`solid`, `blink`,
+  `rainbow`, `off`) and nothing else.
+- **The sounds**, through Web Audio.
+- **The physical controls** — head touch, buttons A/B/C, servo sliders — posted
+  back to the bridge as if a hand had touched the robot.
+
+It runs against **live Claude Code sessions**. The hooks in
+`~/.claude/settings.json` are the same ones the real device will use, so a
+permission prompt in your terminal lights an amber LED in the browser, and
+approving it from the chat clears it. There is nothing to fake.
+
+Beyond the emulator, three things make working blind survivable:
+
+- **`POST /events`** — push any event with `curl` (Bearer token from
+  `init`). An adapter that doesn't exist yet can be prototyped as a shell
+  one-liner before anyone writes it.
+- **`POST /replay`** — re-run a recorded day of events through the current state
+  machine. Yesterday's bug, reproduced on demand.
+- **The `/sim/*` endpoints** — fake a permission prompt, cycle the mode, force
+  an emotion, press a button.
+
+### The emulator is not the firmware
+
+It is a stand-in, and a stand-in that lies is worse than none. Two divergences
+shipped and had to be hunted down: `rainbow` was painted as a plain solid LED,
+and `pattern: 'off'` lit the LED instead of leaving it dark. Both were caught by
+asking "would the robot do this?", not by a test.
+
+So: the emulator's capabilities are pinned to the firmware's. `pulse` was
+removed from the schema the day we read
+`stack-chan/firmware/stackchan/led/led.ts` and found it wasn't there. Anything
+the emulator can do that the robot cannot is a bug filed in [DEBT.md](DEBT.md).
+
+And some things a simulator structurally cannot answer — BLE latency under load,
+whether the ESP32-S3 keeps up with audio and servos at once, whether the speech
+balloon is legible at arm's length. Those are Phase 0, and they are why Phase 0
+still exists in the [ROADMAP](ROADMAP.md) instead of being quietly skipped.
 
 ## Repository contents
 
