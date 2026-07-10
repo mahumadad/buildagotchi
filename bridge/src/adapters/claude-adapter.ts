@@ -231,7 +231,7 @@ export class ClaudeAdapter implements Adapter {
       }
 
       case 'SessionEnd':
-        this.#sessions.delete(sessionId);
+        this.#retireSession(session);
         break;
 
       case 'Notification': {
@@ -320,7 +320,7 @@ export class ClaudeAdapter implements Adapter {
    * something happened but we can't tell if it was approve or deny, so the
    * event carries "external" and downstream code treats it as resolved.
    */
-  #autoResolvePending(session: ClaudeSession, source: 'approved' | 'external'): void {
+  #autoResolvePending(session: ClaudeSession, source: 'approved' | 'external' | 'abandoned'): void {
     const pending = session.pendingPermission;
     if (!pending) return;
     session.pendingPermission = undefined;
@@ -474,10 +474,10 @@ export class ClaudeAdapter implements Adapter {
     const now = Date.now();
     let changed = false;
 
-    for (const [id, session] of this.#sessions) {
+    for (const [, session] of this.#sessions) {
       const elapsed = now - session.lastEventAt;
       if (session.state === 'stale' && elapsed > this.#cfg.staleSessionTimeoutMs + STALE_EXTRA_MS) {
-        this.#sessions.delete(id);
+        this.#retireSession(session);
         changed = true;
       } else if (session.state !== 'stale' && elapsed > this.#cfg.staleSessionTimeoutMs) {
         session.state = 'stale';
@@ -486,6 +486,23 @@ export class ClaudeAdapter implements Adapter {
     }
 
     if (changed) this.#notifySessionChange();
+  }
+
+  /**
+   * The ONLY way a session leaves `#sessions`. Retiring a session must also
+   * retire any permission it left in flight, or the AttentionManager keeps it
+   * as active forever — `permission_critical` has an infinite TTL (S2.5.8) and
+   * nothing ambient can preempt a critical, so the robot would show a warning
+   * for an operation nobody can ever resolve.
+   *
+   * This bug shipped twice: once through the `PostToolUse` hook path (fixed
+   * 2026-07-09) and once through `SessionEnd` and `#cleanStale`. Funnelling
+   * every deletion through here is what stops a third variant from appearing.
+   * The invariant is pinned by test/permission-session-invariant.test.ts.
+   */
+  #retireSession(session: ClaudeSession): void {
+    this.#autoResolvePending(session, 'abandoned');
+    this.#sessions.delete(session.sessionId);
   }
 
   #computeHookHealth(): AdapterHealth {
