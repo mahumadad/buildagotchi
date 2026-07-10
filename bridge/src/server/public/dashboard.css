@@ -739,3 +739,39 @@ body {
   font-size: 0.7rem;
   font-weight: 600;
 }
+
+/* Tokens panel. `today` / `since start` are output tokens (spend); `context` is
+   the fullest live session's window occupancy (pressure). The bar is scaled to
+   200k, not to a percentage of some assumed model limit — see dashboard.js. */
+.tokens-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.2rem 0;
+}
+
+.tokens-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.tokens-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+}
+
+.tokens-bar {
+  margin-top: 0.5rem;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.tokens-bar-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: var(--sev-medium);
+  transition: width 0.4s ease;
+}

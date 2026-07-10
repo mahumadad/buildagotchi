@@ -708,3 +708,49 @@ function autoServo(timeMs) {
 // caused the balloon bugs of Fase 2. The server now owns the balloon and the
 // AM decides when to preempt (SPEC-FASE-2.5 §0, S2.5.1). M15 will add a
 // server-backed history panel for messages that got scrolled past.
+
+// --- Tokens (GET /stats) ---------------------------------------------------
+// Polled like Screen history, not streamed: the numbers only move when a
+// `response` event lands, and the state SSE already announced that.
+//
+// `today` and `since start` are OUTPUT tokens — spend, following the field names
+// in claude-desktop-buddy/REFERENCE.md. `context` is the fullest live session's
+// window occupancy: pressure, not spend. Sessions are never summed.
+const tokensTodayEl = document.getElementById('tokens-today');
+const tokensSinceStartEl = document.getElementById('tokens-since-start');
+const tokensContextEl = document.getElementById('tokens-context');
+const tokensBarFillEl = document.getElementById('tokens-bar-fill');
+
+// The precedent's abbreviation, so 184502 fits a 320px screen as `184.5K`.
+function formatTokens(n) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+async function refreshTokens() {
+  if (!tokensTodayEl) return;
+  try {
+    const stats = await fetch('/stats').then((r) => r.json());
+    tokensTodayEl.textContent = formatTokens(stats.output.today);
+    tokensSinceStartEl.textContent = formatTokens(stats.output.sinceStart);
+
+    const ctx = stats.context.max;
+    if (ctx === 0) {
+      tokensContextEl.textContent = '—';
+      tokensBarFillEl.style.width = '0%';
+      return;
+    }
+    // No model window is reported anywhere, so show the absolute number and a
+    // bar scaled to 200k. Inventing a percentage against a guessed limit would
+    // be a number that looks authoritative and isn't.
+    const pct = Math.min(100, (ctx / 200_000) * 100);
+    tokensContextEl.textContent = formatTokens(ctx);
+    tokensBarFillEl.style.width = `${pct}%`;
+  } catch {
+    // A failed poll is not worth a visible error; the next one is 5s away.
+  }
+}
+
+refreshTokens();
+setInterval(refreshTokens, 5000);
