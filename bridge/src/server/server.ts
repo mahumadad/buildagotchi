@@ -402,7 +402,12 @@ export class BridgeServer {
       output: { sinceStart: 0, today: 0 },
       context: { bySession: {}, max: 0 },
     };
-    sendJson(res, 200, snapshot);
+    const sessions = this.#opts.claudeAdapter?.sessionCounts() ?? {
+      total: 0,
+      running: 0,
+      waiting: 0,
+    };
+    sendJson(res, 200, { ...snapshot, sessions });
   }
 
   #handleBalloons(res: ServerResponse): void {

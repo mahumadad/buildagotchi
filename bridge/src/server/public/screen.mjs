@@ -25,8 +25,10 @@ function tokensPage(stats) {
 
 function sessionsPage(stats) {
   const entries = Object.entries(stats.context.bySession);
+  // `sessions` is optional so an older /stats payload still renders.
+  const s = stats.sessions ?? { total: 0, running: 0, waiting: 0 };
   return [
-    'SESSIONS',
+    `SESSIONS  ${s.running} run / ${s.waiting} wait`,
     ...(entries.length === 0
       ? ['  none']
       : entries.map(([id, ctx]) => `  ${id.slice(0, 12).padEnd(14)}${formatTokens(ctx)}`)),

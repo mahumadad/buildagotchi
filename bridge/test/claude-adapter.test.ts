@@ -651,3 +651,46 @@ describe('ClaudeAdapter', () => {
     await adapter.stop();
   });
 });
+
+describe('ClaudeAdapter.sessionCounts', () => {
+  let stateDir: string;
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), 'sc-counts-'));
+  });
+  afterEach(() => {
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  it('counts running, waiting, and total, excluding stale', () => {
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    adapter.start(makeBus());
+
+    // working
+    adapter.handleHookEvent({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 'a',
+      cwd: '/x',
+      prompt: 'hi',
+    });
+    // waiting on a permission (the real contract: notification_type)
+    adapter.handleHookEvent({
+      hook_event_name: 'Notification',
+      session_id: 'b',
+      cwd: '/y',
+      notification_type: 'permission_prompt',
+      tool_name: 'Bash',
+      tool_input: { command: 'ls' },
+    });
+
+    const counts = adapter.sessionCounts();
+    expect(counts.total).toBe(2);
+    expect(counts.running).toBe(1);
+    expect(counts.waiting).toBe(1);
+  });
+
+  it('is all zeros with no sessions', () => {
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    adapter.start(makeBus());
+    expect(adapter.sessionCounts()).toEqual({ total: 0, running: 0, waiting: 0 });
+  });
+});

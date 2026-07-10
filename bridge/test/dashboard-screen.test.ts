@@ -12,6 +12,7 @@ import { formatTokens, renderScreenView } from '../src/server/public/screen.mjs'
 const STATS = {
   output: { today: 41_000, sinceStart: 1_055 },
   context: { bySession: { 'sess-abcdef123456': 628_474 }, max: 628_474 },
+  sessions: { total: 2, running: 1, waiting: 1 },
 };
 
 function dom() {
@@ -86,6 +87,7 @@ describe('renderScreenView', () => {
     renderScreenView(els, { view: 'stats', page: 1, pages: 2 }, STATS);
     const text = els.overlay.textContent ?? '';
     expect(text).toContain('SESSIONS');
+    expect(text).toContain('1 run / 1 wait'); // counts from the adapter
     expect(text).toContain('628.5K');
     // Truncated to fit 320px. Asserting the PREFIX is present proves nothing —
     // it is there either way. What distinguishes is that the rest is gone.

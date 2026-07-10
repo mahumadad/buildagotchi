@@ -322,6 +322,25 @@ export class ClaudeAdapter implements Adapter {
     return this.#sessions;
   }
 
+  /**
+   * How many sessions are live, working, and blocked on a permission. The buddy
+   * prototype shows this on its screen ("3 running, 1 waiting"); we tracked it
+   * internally and never surfaced it. Stale sessions don't count — a session
+   * that stopped emitting 35 min ago is not "open".
+   */
+  sessionCounts(): { total: number; running: number; waiting: number } {
+    let total = 0;
+    let running = 0;
+    let waiting = 0;
+    for (const session of this.#sessions.values()) {
+      if (session.state === 'stale') continue;
+      total++;
+      if (session.state === 'working') running++;
+      else if (session.state === 'permission_pending') waiting++;
+    }
+    return { total, running, waiting };
+  }
+
   resolvePermission(sessionId: string, action: 'approved' | 'denied'): string | null {
     const session = this.#sessions.get(sessionId);
     if (!session?.pendingPermission) return null;
