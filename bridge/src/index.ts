@@ -108,7 +108,7 @@ async function main(): Promise<void> {
         }
 
         // Life stats: only real Claude events mark activity (not demo, not replay).
-        if (e.source === 'claude') {
+        if (e.source === 'claude' && !e.payload.replayedFrom) {
           const result = lifeStats.markActive();
           if (result.crossedMilestone) {
             bus.publish(newEvent({
@@ -121,7 +121,7 @@ async function main(): Promise<void> {
         }
 
         // Life stats: count permission resolutions from the hook path.
-        if (e.source === 'claude' && e.category === 'permission_resolved') {
+        if (e.source === 'claude' && e.category === 'permission_resolved' && !e.payload.replayedFrom) {
           const action = e.payload.action;
           if (action === 'approved') {
             lifeStats.recordResolution('approved', 'external');
