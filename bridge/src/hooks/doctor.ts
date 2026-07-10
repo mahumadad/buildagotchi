@@ -103,7 +103,7 @@ export async function runDoctor(opts: {
 }
 
 function hasBuildagotchiHooks(hooks: Record<string, unknown>): boolean {
-  const requiredEvents = ['UserPromptSubmit', 'Stop', 'Notification'];
+  const requiredEvents = ['UserPromptSubmit', 'Stop', 'Notification', 'PostToolUse'];
   return requiredEvents.some((event) => {
     const entries = hooks[event];
     if (!Array.isArray(entries)) return false;

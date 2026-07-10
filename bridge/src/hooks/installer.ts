@@ -8,7 +8,16 @@ export interface HookInstallResult {
   diff: string;
 }
 
-const HOOK_EVENTS = ['UserPromptSubmit', 'Stop', 'SessionEnd', 'Notification', 'SubagentStop'];
+const HOOK_EVENTS = [
+  'UserPromptSubmit',
+  'Stop',
+  'SessionEnd',
+  'Notification',
+  'SubagentStop',
+  // PostToolUse fires after Claude Code executes a tool the user just approved —
+  // it's how we detect that a pendingPermission was resolved outside the dashboard.
+  'PostToolUse',
+];
 
 export function generateHookScript(bridgeUrl: string): string {
   return `#!/usr/bin/env bash
