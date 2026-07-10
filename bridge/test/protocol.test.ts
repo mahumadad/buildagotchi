@@ -18,7 +18,8 @@ function makeMetrics() {
   const histograms: Record<string, number[]> = {};
   const metrics: MetricsLike = {
     counter: (name: string) => ({
-      inc: (n = 1) => {
+      // Signature mirrors the real Counter: labelValues first, then n.
+      inc: (_labelValues?: Record<string, string>, n = 1) => {
         counters[name] = (counters[name] ?? 0) + n;
       },
     }),
@@ -57,6 +58,7 @@ describe('ProtocolSession', () => {
     const { metrics, histograms } = makeMetrics();
     const session = new ProtocolSession(transport, baseCfg(), {
       onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
       metrics,
       logger: makeLogger(),
     });
@@ -75,6 +77,7 @@ describe('ProtocolSession', () => {
     const { metrics, counters } = makeMetrics();
     const session = new ProtocolSession(transport, baseCfg(), {
       onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
       metrics,
       logger: makeLogger(),
     });
@@ -95,6 +98,7 @@ describe('ProtocolSession', () => {
     const { metrics, counters } = makeMetrics();
     const session = new ProtocolSession(transport, baseCfg(), {
       onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
       metrics,
       logger: makeLogger(),
     });
@@ -117,6 +121,7 @@ describe('ProtocolSession', () => {
     const { metrics, counters } = makeMetrics();
     const session = new ProtocolSession(transport, baseCfg(), {
       onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
       metrics,
       logger: makeLogger(),
     });
@@ -146,6 +151,7 @@ describe('ProtocolSession', () => {
     const { metrics, counters, histograms } = makeMetrics();
     const session = new ProtocolSession(transport, baseCfg(), {
       onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
       metrics,
       logger: makeLogger(),
     });
@@ -178,6 +184,7 @@ describe('ProtocolSession', () => {
     const { metrics } = makeMetrics();
     const session = new ProtocolSession(transport, baseCfg(), {
       onInboundEvent,
+      onLinkChange: vi.fn(),
       metrics,
       logger: makeLogger(),
     });
@@ -201,6 +208,7 @@ describe('ProtocolSession', () => {
     const { metrics } = makeMetrics();
     const session = new ProtocolSession(transport, baseCfg(), {
       onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
       metrics,
       logger: makeLogger(),
     });

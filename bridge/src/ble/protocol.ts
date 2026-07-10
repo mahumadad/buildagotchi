@@ -14,14 +14,29 @@ export interface BleConfig {
   reconnectBackoff: { initial: number; max: number };
 }
 
-/** Minimal structural subset of the future `server/metrics.ts` Metrics registry (SA3, M4). */
+/**
+ * Minimal structural subset of `server/metrics.ts`'s Metrics registry (SA3, M4).
+ * `inc` takes the optional labelValues record ahead of `n` so the real Counter
+ * satisfies this shape — same reasoning as `config/loader.ts`. Nothing here
+ * passes either argument; the session's counters are unlabelled.
+ */
 export interface MetricsLike {
-  counter(name: string): { inc(n?: number): void };
+  counter(name: string): { inc(labelValues?: Record<string, string>, n?: number): void };
   histogram(name: string): { observe(ms: number): void };
 }
 
 export interface ProtocolSessionDeps {
   onInboundEvent: (kind: 'button' | 'touch', detail: unknown) => void;
+  /**
+   * Link health changed. `false` means the firmware stopped answering and D16's
+   * safe mode must take over the face: a state nobody can update is a state that
+   * lies. `true` means a handshake succeeded and the display is ours again.
+   *
+   * Until this existed the session could only talk *to* the firmware and report
+   * inbound button presses. Nothing could learn the link had died, so
+   * `StateMachine.forceSafeState()` sat in the tree with no caller at all.
+   */
+  onLinkChange: (healthy: boolean) => void;
   metrics: MetricsLike;
   logger: Logger;
   now?: () => number;
@@ -86,6 +101,7 @@ export class ProtocolSession {
   #inboundSinceLastWindow = false;
   #missedWindows = 0;
 
+  #linkHealthy = false;
   #reconnecting = false;
   #reconnectAttempt = 0;
   #reconnectStartedAt = 0;
@@ -104,6 +120,7 @@ export class ProtocolSession {
 
     const ok = await this.#sendHelloAndAwait();
     if (ok) {
+      this.#setLinkHealthy(true);
       this.#scheduleHelloRefresh(HELLO_REFRESH_MS);
     } else {
       this.#clockOffset = 0;
@@ -122,6 +139,17 @@ export class ProtocolSession {
     if (this.#pending) clearTimeout(this.#pending.timer);
     this.#pending = null;
     await this.#transport.disconnect();
+  }
+
+  /** Edge-triggered: the callback only fires when health actually flips. */
+  #setLinkHealthy(healthy: boolean): void {
+    if (this.#linkHealthy === healthy) return;
+    this.#linkHealthy = healthy;
+    this.#deps.onLinkChange(healthy);
+  }
+
+  linkHealthy(): boolean {
+    return this.#linkHealthy;
   }
 
   sendState(state: ResolvedState): void {
@@ -224,6 +252,7 @@ export class ProtocolSession {
 
   #onLinkDead(): void {
     if (this.#reconnecting) return;
+    this.#setLinkHealthy(false); // D16: the face must stop claiming things
     this.#stopHeartbeat();
     this.#stopHelloTimers();
     if (this.#pending) clearTimeout(this.#pending.timer);
@@ -258,6 +287,7 @@ export class ProtocolSession {
 
     this.#reconnecting = false;
     this.#reconnectAttempt = 0;
+    this.#setLinkHealthy(true);
     this.#deps.metrics.counter('ble_reconnects_total').inc();
     this.#deps.metrics
       .histogram('reconnect_duration_ms')
