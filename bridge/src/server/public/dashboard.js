@@ -95,6 +95,10 @@ function renderLeds(leds) {
     const idx = typeof led.index === 'number' ? led.index : 0;
     const el = container.children[idx];
     if (!el) continue;
+    // D-04: `off` is a legal pattern in the schema because the firmware has it.
+    // Lighting the LED for it would make the emulator disagree with the robot,
+    // which is the divergence S2.5.1 exists to prevent. Leave it dark.
+    if (led.pattern === 'off') continue;
     const color = LED_COLORS[led.color] ?? led.color ?? '#e5e5e5';
     el.classList.add('on');
     if (led.pattern && led.pattern !== 'solid') el.classList.add(led.pattern);
@@ -668,7 +672,8 @@ function autoServo(timeMs) {
 
   const pending = firstPendingSession();
   const t = timeMs / 1000;
-  let yaw, pitch;
+  let yaw;
+  let pitch;
 
   if (pending) {
     // Bigger amplitude so it's visible on the 3D canvas — ±20° yaw, ±8° pitch nod

@@ -148,19 +148,32 @@ body {
 .led.blink {
   animation: led-blink 1s steps(2) infinite;
 }
-.led.pulse {
-  animation: led-pulse 1.5s ease-in-out infinite;
+
+/* D-04: the zod enum accepts `rainbow` because the firmware has it
+   (stack-chan/firmware/stackchan/led/led.ts). Without this the emulator painted
+   it as a plain solid LED and lied about what the hardware would do — the exact
+   emulator/firmware divergence S2.5.1 exists to prevent. `hue-rotate` spins the
+   inline colour renderLeds already applied; no need to override it here. */
+.led.rainbow {
+  animation: led-rainbow 2.5s linear infinite;
 }
+
+/* `pulse` was removed from the schema (S2.5.16): the firmware only exposes
+   on/off/blink/rainbow. Its CSS went with it, so nobody writes a rule against
+   a pattern that cannot reach the robot. */
 
 @keyframes led-blink {
   50% {
     opacity: 0.2;
   }
 }
-@keyframes led-pulse {
-  50% {
-    opacity: 0.4;
-    box-shadow: 0 0 3px currentColor;
+
+@keyframes led-rainbow {
+  from {
+    filter: hue-rotate(0deg);
+  }
+  to {
+    filter: hue-rotate(360deg);
   }
 }
 
