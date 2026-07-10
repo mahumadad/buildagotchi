@@ -314,13 +314,95 @@ corrige corriendo biome desde `bridge/`.
 
 ---
 
+## 2026-07-10 — Día 4 (tarde): el checklist, el pipeline y los tokens
+
+Sesión larga. El hilo conductor no lo puse yo: **cuatro veces encontramos código o
+decisiones escritas como si estuvieran vivas, conectadas a nada.**
+
+### El checklist §8.1, terminado
+
+Pasos 6 al 14 ejecutados contra el bridge corriendo. El paso 6 —la razón de ser
+del council— pasó: un permiso benigno expiró por TTL y el balloon se limpió sin
+dejar fantasma sobre el evento promovido.
+
+El paso 11 estaba **mal escrito**. Decía que al resolverse un crítico la `response`
+"no vuelve". Vuelve, y debe: `attention.ts:149` re-encola lo que preempta, y un
+evento vivo merece la pantalla. Lo que no existe es un stack de balloons.
+
+### Lo que estaba escrito y no lo llamaba nadie
+
+- **D-07**: el hot-reload moría tras el primer guardado atómico. `fs.watch` sobre
+  una ruta sigue al inodo; vim, VS Code y `sed -i` lo renombran. Fallaba en
+  silencio absoluto: ni log ni contador. Ahora vigila el directorio.
+- **D-09**: el trust check de D22 **no existía**. Además D22 presupuestaba un
+  permiso de macOS que no hace falta — `lsappinfo` es API pública.
+- **D-11**: `tsconfig` solo incluía `src`. Los tests nunca se typecheckaban. Al
+  destaparlo aparecieron 30 errores, dos de ellos bugs dormidos: el `EventBus`
+  construido con un `Metrics` donde va un `DedupConfig`.
+- **El pipeline BLE entero**: `ProtocolSession` y `SimTransport` existían,
+  testeados en aislamiento, y `index.ts` mandaba el estado a `logger.info`.
+  `forceSafeState()` (D16) llevaba desde la Fase 1 sin un solo llamador, porque
+  el protocolo no tenía forma de avisar que el link murió.
+- **Los tokens**: ya extraíamos `output_tokens` y lo adjuntábamos al payload.
+  Nadie lo leía.
+
+### El bug que el cableado destapó
+
+Al conectar el transporte real bajo `--simulate`, el link **oscilaba una vez por
+segundo** y cada muerte llamaba a `forceSafeState()`, borrando la cara. Causa:
+`#sendStatePayload` transmitía y *después* registraba el `#pending`. Un transporte
+síncrono entrega el ack dentro de `send()`, `#handleAck` no encuentra nada
+pendiente, y dos acks "perdidos" matan un link sano. `protocol.test.ts` nunca lo
+vio: su `LoopbackTransport` responde a los 10 ms, siempre a tiempo.
+
+### Tokens y presión de contexto
+
+Dos números que responden preguntas distintas y se mantienen separados. El
+**output** es gasto (acumulado + diario persistido, siguiendo a
+`claude-desktop-buddy`). El **contexto** es presión: sube solo, se desploma al
+compactar, y no se suma entre sesiones. La ventana del modelo se **declara** en
+config: ningún campo del transcript la reporta, y un porcentaje contra un límite
+adivinado se ve autoritativo siendo inventado.
+
+Los umbrales mueven la cara, disparados por flanco. Al compactar, `context_calm`
+retira al evento anterior con el `resolvesEventId` genérico.
+
+### Lecciones, que son las de siempre
+
+**Un test que no falla cuando rompes lo que dice proteger no prueba nada.** Muté
+cada módulo nuevo. Una mutación sobrevivió: podía romper `forget()` del monitor de
+presión y los once tests seguían verdes, porque ambos tests de olvido observaban
+un nivel *distinto* al anterior y emitían igual con o sin el bug.
+
+**La verificación en vivo encuentra lo que los tests no.** El balloon de presión
+salía como `": contexto 91%"` sin el proyecto. El paso 6 destapó el hot-reload. Y
+la vista secundaria, que yo había dado por buena verificando solo el estado del
+servidor, hacía **desaparecer al robot**: ocultar el contenedor 3D lo colapsaba a
+0×0 y `StackchanScene#resize()` solo corre al redimensionar la ventana. Lo
+encontró Mario apretando los botones.
+
+También me equivoqué escribiendo deuda: D-10 afirmaba que `state_latency_ms` "solo
+mide hasta el ResolvedState". Es falso — mide exactamente la pata del firmware. Si
+hubiera implementado sobre mi propia nota sin verificarla, habría duplicado una
+medición correcta.
+
+### Balance
+
+**447 tests** (391 → 447), typecheck de `src` **y** `test`, lint en la línea base.
+Veinte commits, ninguno pusheado. El Gate 1 pasó de tener tres de cuatro criterios
+inmedibles a tenerlos todos con datos.
+
+`DEBT.md` quedó con cinco entradas abiertas (D-03, D-10, D-12, D-13, D-14) y
+cinco resueltas hoy. Ninguna de las abiertas se puede cerrar sin hardware, sin
+datos reales, o sin una decisión tuya.
+
+---
+
 ## Pendientes inmediatos
 
-- [ ] Push a GitHub (26 commits ahead de `origin/main`)
-- [ ] Paso 6 del checklist §8.1 — reescrito, aún sin ejecutar. Requiere quitar el
-      `ttlOverride` de `permission` **y** bajar `ttlBySeverity.critical`, porque
-      S2.5.8 le dio TTL infinito a las dos categorías de permiso. Revertir el
-      config al terminar.
+- [ ] Push a GitHub (20 commits ahead de `origin/main`)
+- [x] Checklist §8.1 completo (2026-07-10). El paso 11 estaba mal escrito y se
+      corrigió en la spec.
 - [ ] Fase 3 (Calendar → GitHub → Jira). El OAuth de los MCP necesita una sesión
       interactiva.
 - [ ] Fase 0: ejecutar cuando llegue el hardware (NOTES.md tiene el template)
