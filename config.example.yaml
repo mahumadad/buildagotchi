@@ -111,6 +111,7 @@ stateRules:
   - match: { source: claude, category: permission_resolved }
     state:
       emotion: HAPPY
+      decorators: [heart]   # la aprobación se agradece (upstream lo usa para caricias)
       leds: [{ row: left, color: green, pattern: solid }]
       sound: approve
       balloon: ""  # explicit clear for the "resolved" flash
@@ -121,6 +122,7 @@ stateRules:
   - match: { source: claude, category: context_high }
     state:
       emotion: SAD
+      decorators: [sweat]   # la ventana está por reventar: se le nota el esfuerzo
       leds: [{ row: right, color: amber, pattern: blink }]
       sound: notification
       balloon: "{project}: contexto {pct}% — va a compactar"
