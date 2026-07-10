@@ -33,6 +33,84 @@ un bug.
 
 ---
 
+## D-09 — el trust check de D22 no existe
+
+**Dónde**: en ninguna parte. `grep -r trust_check bridge/src` no devuelve nada.
+
+**El problema**: D22 define la métrica con precisión —contar cuántas veces al día
+el usuario enfoca Claude Code mientras el buddy está en NEUTRAL/HAPPY, vía
+Accessibility API— e incluso describe el diálogo de permiso de macOS y el filtro
+anti-falsos-positivos de 30 s. No hay una línea de código. Nadie emite
+`category: trust_check` y no existe ningún lector de foco de ventana en `src/`.
+La decisión está escrita como si estuviera implementada.
+
+**Por qué no explotó**: el Gate 1 nunca se ha corrido. Necesita hardware.
+
+**Qué lo haría explotar**: llega el CoreS3, se usan tres semanas, y al evaluar
+resulta que la métrica que D20 llama "confío en la cara" no tiene datos. Tres
+semanas de medición inservibles para ese criterio.
+
+**Fix**: un adapter que lea la app en foco (`NSWorkspace.frontmostApplication`
+basta; no hace falta `kTCCServiceAccessibility` para el bundle id) y emita el
+evento sintético. D22 ya especifica el filtro de 30 s y el burn-in de 3 días.
+Si el permiso no se concede, la métrica se deshabilita con warning — D22 dice
+que no es bloqueante.
+
+**Costo**: ~medio día. Debe estar listo **antes** de que llegue el hardware, no
+después: es una precondición del Gate 1, no un extra.
+
+---
+
+## D-10 — la latencia del Gate 1 no sobrevive a un reinicio
+
+**Dónde**: `bridge/src/server/metrics.ts` (histogramas en memoria) contra
+`recorder.ts` (el ndjson).
+
+**El problema**: existen `state_latency_ms` y `reconnect_duration_ms`, pero viven
+en memoria y solo se exponen por `GET /metrics`. Reiniciar el bridge los borra y
+nada llega al ndjson. El Gate 1 pide p95 sobre tres semanas.
+
+Peor: el presupuesto de D23 es "evento crítico → **la cara cambia en el display**,
+e2e bridge→firmware→display", y `state_latency_ms` solo mide hasta el
+`ResolvedState` dentro del proceso. Le falta la pata del firmware.
+
+**Por qué no explotó**: nadie ha medido p95 todavía.
+
+**Qué lo haría explotar**: lo mismo que D-09 — evaluar el Gate 1 y no tener serie
+histórica.
+
+**Fix**: dos mitades independientes. (a) Persistir la latencia por evento en la
+línea `state_change` del recorder, que ya se escribe; el p95 se calcula después,
+offline. (b) La pata firmware→display necesita hardware y un ack de la CoreS3;
+va en Fase 1B, junto a D-03.
+
+**Costo**: (a) ~1 h. (b) depende de Fase 1B.
+
+---
+
+## D-11 — `tsc` no typechequea los tests
+
+**Dónde**: `bridge/tsconfig.json` → `"include": ["src"]`.
+
+**El problema**: los archivos de `test/` nunca pasan por el compilador. Vitest los
+transpila sin verificar tipos.
+
+**Por qué no explotó**: los tests fallan igual cuando el código está mal. Lo que
+se pierde es el error de tipo *en el test mismo*.
+
+**Qué lo haría explotar**: ya lo hizo, en pequeño. Al agregar el tercer parámetro
+obligatorio a `resolve()`, cinco llamadas en `attention.test.ts` siguieron
+compilando y pasando `undefined` como `source`, grabando líneas sin origen. La
+suite estaba verde. Lo encontré grepeando, no el compilador.
+
+**Fix**: agregar `test` al `include`, o un `tsconfig.test.json`. Ojo: puede
+destapar errores de tipo preexistentes en los tests, y por eso no entra en el
+commit que descubrió el problema.
+
+**Costo**: 10 min más lo que salga a la luz.
+
+---
+
 ## Resueltas
 
 Se dejan acá con la fecha para no re-descubrirlas.
