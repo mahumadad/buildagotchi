@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pino from 'pino';
@@ -42,7 +42,15 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
 
 const VALID = 'schemaVersion: 1\nattentionManager:\n  ttlBySeverity:\n    high: 2m\n';
 const VALID_CHANGED = 'schemaVersion: 1\nattentionManager:\n  ttlBySeverity:\n    high: 5m\n';
+const VALID_AGAIN = 'schemaVersion: 1\nattentionManager:\n  ttlBySeverity:\n    high: 10m\n';
 const BROKEN = 'schemaVersion: 1\n  bad indent: [\n';
+
+/** What an editor does on save: write a sibling temp file, rename it over the target. */
+function atomicWrite(path: string, content: string): void {
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, content);
+  renameSync(tmp, path);
+}
 
 describe('ConfigLoader', () => {
   const loaders: ConfigLoader[] = [];
@@ -122,6 +130,38 @@ describe('ConfigLoader', () => {
     writeFileSync(path, BROKEN);
     await new Promise((r) => setTimeout(r, 300));
     writeFileSync(path, VALID_CHANGED);
+    await waitFor(() => received === 300_000);
+  });
+
+  // D-07: vim, VS Code, `sed -i` and most editors save atomically — they write a
+  // temp file and rename it over the target. That swaps the inode. A watcher
+  // bound to the path's inode survives the rename event itself and then goes
+  // deaf forever, silently: #reload() is never called, so nothing logs and no
+  // failure counter moves. Only a test that renames AND then writes again can
+  // see it.
+  it('watch(): an atomic save (rename) does not deafen the watcher', async () => {
+    const path = tmpConfigFile(VALID);
+    const loader = new ConfigLoader(path, { logger, metrics: fakeMetrics() });
+    loaders.push(loader);
+    loader.load();
+
+    let received: number | null = null;
+    loader.watch((next) => {
+      received = next.attentionManager.ttlBySeverity.high;
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    atomicWrite(path, VALID_CHANGED);
+    await waitFor(() => received === 300_000);
+
+    // The write that the old implementation never saw.
+    received = null;
+    writeFileSync(path, VALID_AGAIN);
+    await waitFor(() => received === 600_000);
+
+    // And a second atomic save, to prove the watcher was re-armed, not just lucky.
+    received = null;
+    atomicWrite(path, VALID_CHANGED);
     await waitFor(() => received === 300_000);
   });
 });

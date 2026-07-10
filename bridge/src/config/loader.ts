@@ -1,4 +1,5 @@
 import { type FSWatcher, readFileSync, watch } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import type { Logger } from 'pino';
 import { parse } from 'yaml';
 import { type Config, ConfigSchema } from './schema.js';
@@ -62,8 +63,20 @@ export class ConfigLoader {
     return this.#current;
   }
 
+  /**
+   * Watches the config file's DIRECTORY, not the file (D-07). `fs.watch` on a
+   * file path binds to its inode; an atomic save — temp file + `rename`, what
+   * vim, VS Code and `sed -i` all do — swaps the inode and leaves the watcher
+   * bound to an orphan. It keeps reporting the rename it saw, then goes deaf
+   * forever without a single log line. A directory's inode survives the rename.
+   */
   watch(onChange: (next: Config) => void): void {
-    this.#watcher = watch(this.#path, () => {
+    const dir = dirname(this.#path);
+    const file = basename(this.#path);
+    this.#watcher = watch(dir, (_event, changed) => {
+      // `changed` is null on the platforms that don't report a filename; treat
+      // that as "might be ours" rather than miss the change.
+      if (changed !== null && changed !== file) return;
       if (this.#debounceTimer) clearTimeout(this.#debounceTimer);
       this.#debounceTimer = setTimeout(() => {
         void this.#reload(onChange);
