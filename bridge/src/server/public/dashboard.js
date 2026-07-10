@@ -633,7 +633,9 @@ function onServoInput() {
   servoPitchVal.textContent = pitch;
   manualServoUntil = Date.now() + 8000;
   if (scene3d) scene3d.applyServo({ yaw, pitch });
-  simPost('/sim/servo', { yaw, pitch });
+  // No POST: the slider previews neck movement in the 3D scene client-side.
+  // There is no server-side manual servo override — servo comes from the state
+  // rules — so `/sim/servo` was never implemented and returned 404.
 }
 
 if (servoYawEl) servoYawEl.addEventListener('input', onServoInput);
