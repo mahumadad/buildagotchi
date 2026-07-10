@@ -11,13 +11,13 @@ notifications and drive the hardware.
 >
 > The CoreS3 kit is still in the post, so Phase 0 (hardware discovery) and
 > Phase 1B (real BLE) are blocked. Everything else was built anyway, against a
-> simulator — see [Running without the hardware](#running-without-the-hardware).
+> **full web emulator** — see [Running without the hardware](#running-without-the-hardware).
 >
 > | | |
 > |---|---|
-> | **Done** | Phase 1A (bridge foundation), Phase 2 (Claude Code MVP), Phase 2.5 (server-authoritative display + observability) |
-> | **Runs today** | `bridge --simulate` + a web emulator at `localhost:1780`, driven by real Claude Code hooks |
-> | **391 tests** | `npm test` in `bridge/`. Green. |
+> | **Done** | Phase 1A (bridge foundation), Phase 2 (Claude Code MVP), Phase 2.5 (server-authoritative display + observability), Life Stats |
+> | **Runs today** | `npm run dev` in `bridge/` → web emulator at `localhost:1780` with 3D robot, live sessions, dashboard, and event replay |
+> | **505 tests** | `npm test` in `bridge/`. Green. |
 > | **Not built** | BLE transport (stub), Metabolic State (Phase 4), voice (Phase 5), Chrome/Jira/GitHub/Calendar adapters (Phases 3, 6) |
 >
 > [ROADMAP.md](ROADMAP.md) has the phased plan and the validation gates.
@@ -68,6 +68,34 @@ append-only event log with replay, and a local dashboard.
   and replay controls to re-run a past event log against the current state
   machine.
 
+## The emulator
+
+The entire project was developed without the physical robot. The bridge ships
+with a **web-based emulator** at `localhost:1780` that renders exactly what the
+firmware would — a 3D StackChan model with expressive faces, servo movement,
+LEDs, speech balloons, and sound. It connects to your **real Claude Code
+sessions** via hooks in `~/.claude/settings.json`, so what you see in the
+browser is what the robot will do when it arrives.
+
+The emulator dashboard shows:
+
+- **3D robot viewport** — the face, emotions, decorators, and servo pan/tilt,
+  rendered with Three.js in the same 320x240 frame the firmware draws.
+- **Claude sessions panel** — every active Claude Code session on your machine,
+  with status, context usage, last message, and permission simulation buttons.
+- **Simulation controls** — cycle modes (NORMAL/FOCUS/SLEEP), fake permission
+  prompts, trigger emotions, replay past event logs.
+- **Stats pages** — token usage, session counts, and **life stats** (approvals,
+  from-head percentage, workday streak) that persist across restarts.
+- **Screen history** — a scrolling log of everything the robot's balloon has
+  displayed.
+- **Health and attention** — adapter health, current attention priority, event
+  queue depth.
+
+This is not a mock. The emulator runs the real bridge — the real adapters,
+event bus, Attention Manager, state machine, and personality engine — with only
+the BLE transport swapped for a stub.
+
 ## Running without the hardware
 
 The CoreS3 kit was ordered before a line of code was written, and it still
@@ -81,7 +109,7 @@ npm install
 cp ../config.example.yaml ../config.yaml          # config.yaml is gitignored (D25)
 
 npx tsx src/cli.ts init --hooks                   # Keychain token + Claude Code hooks
-npx tsx src/index.ts --simulate --config ../config.yaml
+npm run dev                                       # starts with --simulate
 # open http://localhost:1780
 ```
 
@@ -90,10 +118,7 @@ mints an API token into the macOS Keychain and installs the hook script into
 `~/.claude/settings.json`. Skip it and the emulator still runs — you just drive
 it with the `/sim/*` endpoints instead of with your actual work.
 
-What you get is not a mock. It is the real bridge — the real adapters, event
-bus, Attention Manager and state machine — with the BLE transport swapped for a
-stub, plus a web emulator that renders the `ResolvedState` the firmware would
-have received:
+The web emulator renders the `ResolvedState` the firmware would have received:
 
 - **The robot's face**, in a 3D viewport: emotions, decorators, servo pan/tilt.
 - **The 320×240 LCD**, including the speech balloon, wrapped and truncated the
@@ -150,6 +175,7 @@ still exists in the [ROADMAP](ROADMAP.md) instead of being quietly skipped.
 | [SPEC-IMPL-FASE-2.md](SPEC-IMPL-FASE-2.md) | Executable plan for Phase 2 (M6–M11). |
 | [SPEC-FASE-2.5.md](SPEC-FASE-2.5.md) | Spec for Phase 2.5 (server-authoritative balloon + observability). Explains why the dashboard can't own display policy. |
 | [SPEC-IMPL-FASE-2.5.md](SPEC-IMPL-FASE-2.5.md) | Executable plan for Phase 2.5 (M12a–M17), post-council revision 2. |
+| [docs/superpowers/specs/2026-07-10-life-stats-design.md](docs/superpowers/specs/2026-07-10-life-stats-design.md) | Life stats spec — three fact-based metrics (approvals, fromHead%, streak), council-reviewed. |
 | [SETUP.md](SETUP.md) | Toolchain setup for ModdableSDK + ESP-IDF on macOS. |
 | [NOTES.md](NOTES.md) | Template for recording Phase 0 discovery evidence. |
 | [config.example.yaml](config.example.yaml) | Annotated template of the bridge configuration (mode, Attention Manager, dedup, stateRules, BLE, external surface). Copy to `config.yaml` (gitignored) to use. |
