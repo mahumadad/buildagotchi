@@ -138,6 +138,37 @@ seguridad, no la estética.
 
 ---
 
+## D-14 — `dashboard.js` no tiene ni un test
+
+**Dónde**: `bridge/src/server/public/dashboard.js` (~800 líneas), y su CSS.
+
+**El problema**: la suite cubre `src/` y `test/`. El JS del cliente no lo toca
+nadie: no hay jsdom, no hay tests de render, y `tsconfig.test.json` tampoco lo
+typechequea porque no es TypeScript.
+
+**Por qué no explotó**: el emulador es una herramienta de desarrollo, no el
+producto. El producto es el firmware.
+
+**Qué lo haría explotar**: ya lo hizo, el 2026-07-10. Ocultar el contenedor 3D
+para mostrar la página de stats lo colapsó a 0×0; `StackchanScene#resize()` solo
+corre en el evento `resize` de la ventana, así que el canvas WebGL quedó en cero
+píxeles para siempre y la cara desaparecía al volver. **Lo encontró Mario usando
+el dashboard, no la suite** — y yo había dado por buena la vista tras verificar
+únicamente el estado del servidor.
+
+El riesgo de fondo es peor que un canvas roto: mientras el emulador sea la única
+evidencia de que el firmware hará lo correcto, un bug ahí es un bug que se
+descubre en el hardware.
+
+**Fix**: vitest ya trae `environment: 'jsdom'`. Con eso se pueden testear
+`renderScreenView`, `renderLeds` y `formatTokens` sin navegador. Lo que **no** se
+puede testear así es el WebGL — para eso hace falta una aserción sobre el tamaño
+del canvas tras un ciclo de vistas, y eso es Playwright.
+
+**Costo**: ~2 h para jsdom y las funciones puras. Playwright es otra decisión.
+
+---
+
 ## Resueltas
 
 Se dejan acá con la fecha para no re-descubrirlas.
