@@ -360,3 +360,52 @@ describe('StateMachine — balloon policy (M12a)', () => {
     expect(sm.current().balloon).toBe('');
   });
 });
+
+/**
+ * D-08. `interpolate()` leaves an unknown `{key}` literal on purpose, so a broken
+ * template is loud instead of silent. That is right for a log and wrong for the
+ * robot's screen, which cannot explain itself. The `response` rule interpolates
+ * `{text}`, and `text` is absent whenever the `Stop` hook carries no
+ * `last_assistant_message` and `transcriptReadEnabled` is false — a supported
+ * config. The balloon then read `[proj] {text}`.
+ */
+describe('StateMachine — unresolved placeholders never reach the screen (D-08)', () => {
+  let deps: StateMachineDeps;
+
+  beforeEach(() => {
+    deps = makeDeps().deps;
+  });
+
+  const RESPONSE_RULE: StateRule = {
+    match: { category: 'response' },
+    balloonPolicy: 'sticky',
+    state: { emotion: 'HAPPY', balloon: '[{project}] {text}' },
+  };
+
+  it('#23: a template with every key present interpolates as before', () => {
+    const sm = new StateMachine([RESPONSE_RULE], deps);
+    sm.apply(activeOf(ev('response', { cwd: '/tmp/proj11', text: 'listo' })));
+    expect(sm.current().balloon).toBe('[proj11] listo');
+  });
+
+  it('#24: a missing key falls back to inheritance instead of showing `{text}`', () => {
+    const sm = new StateMachine([STICKY_RULE(), RESPONSE_RULE], deps);
+    sm.apply(activeOf(ev('sticky_evt'))); // leaves 'RESP', sticky
+    sm.apply(activeOf(ev('response', { cwd: '/tmp/proj11' }))); // `text` absent
+    expect(sm.current().balloon).not.toContain('{');
+    expect(sm.current().balloon).toBe('RESP'); // inherited, as a silent rule would
+  });
+
+  it('#25: with nothing to inherit, a missing key leaves the screen empty', () => {
+    const sm = new StateMachine([RESPONSE_RULE], deps);
+    sm.apply(activeOf(ev('response', { cwd: '/tmp/proj11' })));
+    expect(sm.current().balloon).toBe('');
+  });
+
+  it('#26: the balloon a personality template renders is guarded too', () => {
+    const personality = new PersonalityManager(preset({ response: 'dijo: {text}' }));
+    const sm = new StateMachine([RESPONSE_RULE], deps, personality);
+    sm.apply(activeOf(ev('response', { cwd: '/tmp/proj11' })));
+    expect(sm.current().balloon).toBe('');
+  });
+});

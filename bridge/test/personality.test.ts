@@ -108,10 +108,28 @@ describe('StateMachine with personality', () => {
       source: 'claude',
       category: 'permission',
       severity: 'high',
-      payload: { cwd: '/Users/x/myapp' },
+      payload: { cwd: '/Users/x/myapp', command: 'ls -la' },
     });
     sm.apply({ event: e, deadline: null });
-    expect(sm.current().balloon).toBe('myapp: {command}');
+    expect(sm.current().balloon).toBe('myapp: ls -la');
+  });
+
+  // D-08: this test used to omit `command` and assert that the literal
+  // `myapp: {command}` reached the screen — the bug, written down as an
+  // expectation. The StateMachine now refuses to render a template whose
+  // placeholders didn't all resolve.
+  it('never renders a preset template with an unresolved placeholder', () => {
+    const preset = loadPreset('companion', PRESETS_DIR);
+    const manager = new PersonalityManager(preset);
+    const sm = new StateMachine(RULES, deps(), manager);
+    const e = newEvent({
+      source: 'claude',
+      category: 'permission',
+      severity: 'high',
+      payload: { cwd: '/Users/x/myapp' }, // no `command`
+    });
+    sm.apply({ event: e, deadline: null });
+    expect(sm.current().balloon).toBe('');
   });
 
   it('uses the personality idle emotion when there is no active attention', () => {

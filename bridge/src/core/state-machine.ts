@@ -62,6 +62,9 @@ interface Balloon {
 
 const BACKGROUND_MOOD_EMOTION: Emotion = 'NEUTRAL';
 const EMPTY_BALLOON: Balloon = { text: '', policy: 'transient' };
+
+/** Same shape `interpolate()` substitutes; what it leaves behind is an unresolved key. */
+const UNRESOLVED_PLACEHOLDER = /\{\w+\}/;
 const CRITICAL_WINDOW_MS = 60 * 60 * 1000; // 60 min
 const DEFAULT_BALLOON_MAX_CHARS = 240;
 
@@ -252,6 +255,10 @@ export class StateMachine {
     const fromPersonality = this.#personality?.balloon(e.category, ctx) ?? null;
     if (fromPersonality !== null) rawText = fromPersonality;
 
+    // Inheritance, as a silent rule would do (S2.5.2). Only `sticky` survives.
+    const inherit = (): Balloon =>
+      this.#balloon.policy === 'sticky' ? { ...this.#balloon } : { ...EMPTY_BALLOON };
+
     let balloon: Balloon;
     if (rawText === undefined) {
       // Inheritance on a silent rule (S2.5.2). Only `sticky` balloons survive
@@ -262,12 +269,26 @@ export class StateMachine {
       // Bug found in the M13 integration verification 2026-07-09: a permission
       // (transient) approved from chat would leak its balloon onto whatever
       // next event was promoted from the queue.
-      balloon = this.#balloon.policy === 'sticky' ? { ...this.#balloon } : { ...EMPTY_BALLOON };
+      balloon = inherit();
     } else {
-      balloon = {
-        text: truncate(interpolate(rawText, ctx), this.#balloonMaxChars),
-        policy: rule?.balloonPolicy ?? 'transient',
-      };
+      const text = interpolate(rawText, ctx);
+      if (UNRESOLVED_PLACEHOLDER.test(text)) {
+        // D-08. `interpolate()` keeps an unknown `{key}` literal on purpose, so a
+        // broken template is loud rather than silent. Loud belongs in the log; the
+        // robot's screen can't explain itself. `{text}` is missing whenever the
+        // `Stop` hook carries no `last_assistant_message` and `transcriptReadEnabled`
+        // is off — a supported config — and the screen used to read `[proj] {text}`.
+        logger.warn(
+          { category: e.category, template: rawText, rendered: text },
+          'balloon template left placeholders unresolved; falling back to inheritance',
+        );
+        balloon = inherit();
+      } else {
+        balloon = {
+          text: truncate(text, this.#balloonMaxChars),
+          policy: rule?.balloonPolicy ?? 'transient',
+        };
+      }
     }
 
     // The extra decorators from personality feed the state, not the balloon.
