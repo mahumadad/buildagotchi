@@ -755,6 +755,167 @@ sigue disparando ANGRY directo). Es el "background mood".
 **Ponderación contextual del tiempo** (afinable en config): un error a las 11am no
 pesa lo mismo que a las 23:30 si estás cansado. Multiplicador horario opcional.
 
+**Estado (2026-07-09)**: sigue en Fase 4. El seam ya existe:
+`StateMachine.#backgroundMood()` es el único punto que decide la cara cuando no
+hay evento activo, y Fase 2.5 lo dejó aislado. Implementar D14 es reemplazar el
+`personality.idleEmotion()` fijo por `emotionByState[metabolic.snapshot().state]`.
+
+**Criterio para retomarlo** (S2.5.5): que existan ≥2 fuentes de input
+independientes (Fase 3 aporta Calendar y GitHub) **y** que el score salga de
+`CALM` en un día de uso real. Hoy, con solo el `ClaudeAdapter`: 2 sesiones
+`working` (peso 1) + 1 permiso pendiente (peso 5) = score 7 → `CALM`. Salir de
+`CALM` (>20) requiere 4 permisos simultáneos o un `error_active`, y ningún
+adapter emite `category: error` todavía. El motor devolvería `CALM` siempre;
+solo se movería con `curl`.
+
+---
+
+## Decisiones de Fase 2.5 — expresión y observabilidad (2026-07-09)
+
+Tomadas en [SPEC-FASE-2.5.md](SPEC-FASE-2.5.md), revisadas por el council
+(rev. 2, APROBADO CON CAMBIOS). El bug bloqueante (C1) se verificó
+empíricamente contra el bridge corriendo antes de rediseñar — ver DEVLOG.
+
+### S2.5.1 — El servidor decide el balloon, el cliente pinta
+
+`dashboard.js` tenía cuatro escritores compitiendo por el mismo balloon
+(`renderState`, `renderSessions`, `addEvent`, `updateScreenInfo`). Cada uno
+produjo un bug. Ahora el `StateMachine` es la única fuente y el dashboard es un
+renderer sin lógica: una sola llamada a `setBalloon`, dentro de `renderState`.
+
+El argumento que la cierra no es estético: **el firmware Moddable del CoreS3 no
+puede correr JS de browser**. Toda política que viva en el cliente hay que
+reescribirla en Fase 1B, y las dos copias divergen. Corroborado por
+`claude-desktop-buddy/REFERENCE.md`: el heartbeat BLE lleva un solo campo `msg`
+de texto — el firmware espera un balloon **ya resuelto**, no reglas.
+
+### S2.5.2 — La vida de un balloon la declara su regla, no su valor
+
+Cada `stateRule` declara `balloonPolicy`:
+
+| valor | significado |
+|---|---|
+| `transient` (**default**) | muere cuando su evento deja de ser el activo, **por cualquier vía**: resolución, expiración por TTL, drop por modo, watchdog |
+| `sticky` | sobrevive a la muerte de su evento; solo lo reemplaza otro balloon |
+
+Y el texto: regla sin `balloon` → **hereda**; `""` → limpia; string → reemplaza.
+
+**Por qué no un valor centinela.** La rev. 1 usaba `undefined`/`""` para
+codificar la vida del balloon y obligaba a que `permission_resolved` recordara
+poner `balloon: ""`. El council lo rechazó como BLOQUEANTE y tenía razón: hay
+**tres caminos** que limpian el evento activo del `AttentionManager` sin
+publicar nada al bus (`attention.ts:190-193` TTL, `:91-94` mode-drop,
+`:280-283` watchdog). El texto del evento muerto se pegaba al siguiente evento
+promovido de la cola. *Un diseño que te obliga a recordar algo está mal.*
+
+La vida de un balloon no es propiedad de su valor: es propiedad de su relación
+con el evento que lo produjo. El default seguro (`transient`) limpia solo.
+
+### S2.5.3 — El modo filtra la expresión, no el estado informativo
+
+Un evento `ambient` (prompt, response) no pasa el filtro de `FOCUS`/`SLEEP` en
+el `AttentionManager`, así que en esos modos la pantalla no se actualiza con
+respuestas. Las cards del dashboard sí, porque viajan por el canal SSE
+`session`, que no pasa por el bus. No es un bug: es Calm Tech operando.
+
+### S2.5.4 — Truncado configurable, nunca cableado
+
+`personality.balloonMaxChars` (default 240). El firmware querrá ~60 en 320×240.
+El wrap lo hace el firmware (`speech-balloon.ts` mide glifos), así que el bridge
+trunca por caracteres, no por píxeles.
+
+### S2.5.5 — D14 (Metabolic State) permanece en Fase 4
+
+La rev. 1 lo adelantaba. Devuelto por el council con argumento numérico
+concluyente. Ver el estado anotado en D14 arriba.
+
+### S2.5.6 — El template se interpola con todo el payload
+
+No con un subset fijo de `{project, command, session}`. Habilita `{text}`,
+`{message}`, `{tokens}` sin tocar código.
+
+### S2.5.7 — `POST /replay` solo con `--simulate`
+
+Republicar eventos al bus en producción reescribiría el estado real. El `file`
+se resuelve con `realpath` contra `recorder.dir` — `resolve()` solo no atrapa un
+symlink que escape del directorio.
+
+### S2.5.8 — Las categorías de evento son la clave de todo
+
+El `ClaudeAdapter` emite `permission` y `permission_critical` como categorías
+distintas. Así `stateRules` le da LED rojo al crítico y `templates` texto
+distinto, sin casos especiales en el código.
+
+**El filo, y su cierre.** `#computeDeadline` busca el override por
+`source`+`category` exactos. Sin la entrada de `permission_critical`, el permiso
+**crítico** cae a `ttlBySeverity.critical` = 30 s y expira, mientras el benigno
+conserva su TTL infinito. **Falla invertido.** Cerrado por dos tests
+obligatorios, no por disciplina:
+
+1. **Guard de TTL**: para toda categoría de `CLAUDE_CRITICAL_CATEGORIES`,
+   `#computeDeadline()` devuelve `null`. Atrapa la próxima categoría que agregue
+   Fase 3.
+2. **Contrato template↔categoría**: para toda categoría de `CLAUDE_CATEGORIES` ×
+   cada preset, o hay template o la categoría está en `silentCategories`.
+
+*(Alternativa descartada: distinguir por severidad `critical` vs `high`. Cierra
+el filo del TTL estructuralmente, pero en `SLEEP` el `AttentionManager`
+descartaría el permiso benigno con Claude bloqueado esperando. Se prefirió el
+filo cerrado por aserción al filo semántico sin cierre.)*
+
+### S2.5.9 — La personalidad gana el texto; la regla gana la política
+
+D28: la personalidad es capa de expresión. `rule.state.balloon` es el default
+estructural; si el preset define template para esa categoría, lo pisa. Ambos se
+interpolan. `balloonPolicy` siempre viene de la regla — no es expresión, es
+mecánica.
+
+### S2.5.10 — `PersonalityManager.balloon()` devuelve `string | null`
+
+`null` = no hay template. `""` = limpiar. El llamador usa `!== null`.
+
+**Hallazgo que lo motivó**: la feature de balloons por personalidad (D28) **nunca
+funcionó**. `personality.ts` buscaba `templates[category]`; los presets definían
+`permission.pending` y el adapter emitía `permission`. Intersección vacía con
+las 6 categorías. `balloon()` no devolvió un string en dos fases, con 254 tests
+verdes. El balloon que se veía lo dibujaba el cliente — el código que S2.5.1
+borra.
+
+### S2.5.11 — El `ResolvedState` emitido siempre lleva `balloon: string`
+
+Posiblemente `""`. La herencia y la política se resuelven dentro del
+`StateMachine` y nunca cruzan la frontera. Cliente y firmware no interpretan.
+
+### S2.5.12 — `balloonPolicy` vive en el `StateRule`, no en el `ResolvedState`
+
+`state` es lo que se envía al firmware. `balloonPolicy` es política del bridge;
+el firmware no la necesita ni la entiende.
+
+### S2.5.13 — El truncado se aplica al string final ya interpolado
+
+No a cada variable. Un `{text}` de 4 KB no se come el prefijo `[proyecto]`.
+
+### S2.5.14 — `set_face` y `forceSafeState()` limpian el balloon
+
+`mcp:set_face` sin `payload.balloon` explícito → limpia. Un agente que fuerza una
+cara no debe arrastrar el texto de otro evento. `forceSafeState()` es el estado
+seguro: no puede heredar nada.
+
+### S2.5.15 — `emit()` conserva su firma
+
+`StateMachineDeps.emit: (state: ResolvedState) => void` no cambia: el transporte
+BLE necesitará que el estado se le **empuje**, no ir a buscarlo. El bug de las
+dos formas llegando a `notifyState` se arregló en el llamador, y `notifyState()`
+pasó a no tener argumento — así toda ruta (emit, sim/mode, sim/touch) manda la
+misma forma a nivel de tipos.
+
+### S2.5.16 — Los patterns de LED son los del firmware
+
+`stack-chan/firmware/stackchan/led/led.ts:60-140` expone `on`, `off`, `blink`,
+`rainbow`. **`pulse` no existe** (lo tenía el emulador). El enum de zod se
+restringe a `solid | blink | rainbow | off`. Escribir config contra una
+capacidad que el hardware no tiene es fabricarse una migración.
+
 ---
 
 ## Decisiones abiertas

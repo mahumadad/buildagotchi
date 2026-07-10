@@ -52,10 +52,16 @@ and a local dashboard.
 
 | File | Purpose |
 |---|---|
-| [DECISIONS.md](DECISIONS.md) | Anchored architectural decisions (D1–D26) and risks (R1–R8). The source of truth. |
+| [DECISIONS.md](DECISIONS.md) | Anchored architectural decisions (D1–D28, A1, S2.5.1–S2.5.16) and risks (R1–R8). The source of truth. |
 | [ROADMAP.md](ROADMAP.md) | Phased plan with validation gates between phases. |
-| [SPEC-FASE-1.md](SPEC-FASE-1.md) | Implementation spec for Phase 1 (bridge foundation + BLE link), split into 1A (no hardware) / 1B (hardware). |
-| [SPEC-IMPL-FASE-1A.md](SPEC-IMPL-FASE-1A.md) | Executable implementation plan for Phase 1A (milestones M0–M5): exact contracts, test matrices, TDD order, done criteria. |
+| [DEVLOG.md](DEVLOG.md) | Chronological log of what was built, what was verified, and what broke. The ROADMAP has the plan; this has the reality. |
+| [DEBT.md](DEBT.md) | Known technical debt: where it is, why it hasn't exploded yet, what would make it explode, and what the fix costs. |
+| [SPEC-FASE-1.md](SPEC-FASE-1.md) | Spec for Phase 1 (bridge foundation + BLE link), split into 1A (no hardware) / 1B (hardware). |
+| [SPEC-IMPL-FASE-1A.md](SPEC-IMPL-FASE-1A.md) | Executable plan for Phase 1A (M0–M5): contracts, test matrices, TDD order, done criteria. |
+| [SPEC-FASE-2.md](SPEC-FASE-2.md) | Spec for Phase 2 (ClaudeAdapter, dashboard, MCP server, personality presets). |
+| [SPEC-IMPL-FASE-2.md](SPEC-IMPL-FASE-2.md) | Executable plan for Phase 2 (M6–M11). |
+| [SPEC-FASE-2.5.md](SPEC-FASE-2.5.md) | Spec for Phase 2.5 (server-authoritative balloon + observability). Explains why the dashboard can't own display policy. |
+| [SPEC-IMPL-FASE-2.5.md](SPEC-IMPL-FASE-2.5.md) | Executable plan for Phase 2.5 (M12a–M17), post-council revision 2. |
 | [SETUP.md](SETUP.md) | Toolchain setup for ModdableSDK + ESP-IDF on macOS. |
 | [NOTES.md](NOTES.md) | Template for recording Phase 0 discovery evidence. |
 | [config.example.yaml](config.example.yaml) | Annotated template of the bridge configuration (mode, Attention Manager, dedup, stateRules, BLE, external surface). Copy to `config.yaml` (gitignored) to use. |

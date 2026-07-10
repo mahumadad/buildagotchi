@@ -187,7 +187,19 @@ exportada del recorder y usada por el server.
 
 ## Pendientes inmediatos
 
-- [ ] Push a GitHub (16 commits + todo Fase 2.5)
+- [ ] Push a GitHub (19 commits ahead de `origin/main`)
+- [ ] Verificación manual pendiente de Fase 2.5 (§8.1 de SPEC-IMPL-FASE-2.5), tres
+      pasos que los tests unitarios no cubren:
+      - Paso 5: aprobar desde el chat de Claude Desktop → `PostToolUse` limpia el
+        balloon end-to-end
+      - Paso 6: bajar `ttlBySeverity.critical` a 5 s y ver un `permission` benigno
+        expirar y limpiarse solo (el fix de C1 en producción, no en unit test)
+      - Paso 11: crítico preempta `response` → al resolver, el response **no**
+        vuelve, pero está en Screen history (decisión de producto, §12)
 - [ ] Fase 0: ejecutar cuando llegue el hardware (NOTES.md tiene el template)
 - [ ] Fase 1B: BLE real con noble + CoreS3
 - [ ] Gate 1: 3 semanas de uso real del MVP (criterios en ROADMAP.md)
+
+Deuda técnica registrada en [DEBT.md](DEBT.md) — cinco entradas, ninguna
+bloqueante. La más peligrosa es D-01 (`statesEqual` con `JSON.stringify`), que
+explota cuando Fase 3 empiece a emitir `direction`.

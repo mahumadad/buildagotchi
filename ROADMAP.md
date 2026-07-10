@@ -171,12 +171,29 @@ direccionadas al lado correcto, respetando modo activo.
 **Objetivo**: el "background mood" del sistema. Con adapters de Fase 3 activos, ya hay
 suficientes inputs para un score de carga con sentido.
 
+> **El seam ya está hecho.** Fase 2.5 aisló `StateMachine.#backgroundMood()` como el
+> único punto que decide la cara cuando no hay evento activo. Implementar D14 es
+> reemplazar el `personality.idleEmotion()` fijo por
+> `emotionByState[metabolic.snapshot().state]`. No hay refactor pendiente.
+>
+> **Precondición dura** (S2.5.5): D14 se intentó adelantar a Fase 2.5 y el council lo
+> devolvió. Con solo el `ClaudeAdapter` como fuente el score vive en `CALM` — 2 sesiones
+> `working` (peso 1) + 1 permiso pendiente (peso 5) = 7. Salir de `CALM` (>20) requiere
+> 4 permisos simultáneos o un `error_active`, y **ningún adapter emite `category: error`
+> todavía**. No arrancar Fase 4 sin ≥2 fuentes de input independientes de Fase 3
+> (Calendar + GitHub), o el motor se termina testeando contra `curl`.
+
 **Alcance:**
 - **Metabolic State score** (D14) con heurística simple y pesos declarativos:
   - Score 0-100 con derivación categórica CALM/FLOW/SATURATED/OVERLOADED/EXHAUSTED
   - Cara refleja el rango, decorators (sweat) aparecen en niveles altos
-  - Solo alimenta cara cuando no hay evento activo — no pisa reacciones concretas
+  - Solo alimenta cara cuando no hay evento activo — no pisa reacciones concretas.
+    El test que lo protege es obligatorio: score 95 + evento `permission` activo
+    debe dar DOUBTFUL (del permiso), no ANGRY (del score)
   - Ponderación horaria contextual (afinable)
+  - Recalcular en el `tick()` del `AttentionManager`, no en un timer propio — dos
+    relojes se desincronizan bajo `vi.useFakeTimers()`
+  - `RecorderContext.metabolicScore` deja de ser `null` (D15 lo pide desde Fase 1)
 - **Pomodoro**: mueve la cabeza al terminar el bloque.
 - **Break reminders** cada 90 min: mira a la ventana.
 - **Idle nudge**: Claude esperándote hace X min → TTS suave (si Fase 5 ya está).
@@ -184,7 +201,9 @@ suficientes inputs para un score de carga con sentido.
 
 **Verificación**: en un día real, la cara refleja carga cognitiva gradual sin
 necesidad de eventos discretos. Un ciclo Pomodoro completo dispara el movimiento;
-en FOCUS solo pasan urgentes.
+en FOCUS solo pasan urgentes. **Criterio de validación de D14** (S2.5.5): el score
+sale de `CALM` en un día de uso real. Si no lo hace, los pesos están mal o las fuentes
+no alcanzan — no se da por bueno el motor solo porque los tests pasan.
 
 ---
 
