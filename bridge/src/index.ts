@@ -7,6 +7,8 @@ import {
   TrustCheckAdapter,
   readFrontmostBundleId,
 } from './adapters/trust-check.js';
+import { ProtocolSession } from './ble/protocol.js';
+import { SimTransport } from './ble/transport-sim.js';
 import { parseArgs } from './cli.js';
 import { ConfigLoader } from './config/loader.js';
 import { AttentionManager } from './core/attention.js';
@@ -30,13 +32,12 @@ const logger = pino({ name: 'bridge' });
  * config → metrics → recorder → bus (recorder hook) → AM → state machine →
  * transport → server → adapters → registerShutdown.
  *
- * SPEC GAP: §5.7 says "transport (M5; hasta entonces un stub que loguea)" —
- * M5's real ProtocolSession/Transport already landed in this repo (built in
- * parallel, per §7's "M4 y M5 ... pueden ejecutarse en paralelo"), but wiring
- * it here is explicitly out of scope for this milestone's instructions. M4
- * keeps the stub the spec describes; wiring the real BLE transport into
- * index.ts is left for whichever milestone officially closes that
- * integration.
+ * The BLE transport is real under `--simulate`: `ProtocolSession` over
+ * `SimTransport`, which answers hello/ack/state_applied. Handshake, heartbeat,
+ * retry, reconnect backoff, safe mode and the latency histogram are all the same
+ * code the CoreS3 will run against — only the peer is synthetic. Without
+ * `--simulate` there is no transport at all, because no real one exists yet, and
+ * the dashboard is the only display.
  */
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
@@ -60,11 +61,15 @@ async function main(): Promise<void> {
 
   const adapters: Adapter[] = [];
 
+  // Assigned after the state machine exists (it needs a `forceSafeState` target).
+  // Null when there is no transport at all: no hardware, no `--simulate`.
+  let session: ProtocolSession | null = null;
+
   function recorderContext(): RecorderContext {
     return {
       metabolicScore: null, // Fase 1: sin Metabolic State
       activeMode: attentionManager.getMode(),
-      bleHealthy: false, // stub transport (see SPEC GAP above): never connected
+      bleHealthy: session?.linkHealthy() ?? false,
       adapterHealth: Object.fromEntries(adapters.map((a) => [a.name, a.health().status])),
     };
   }
@@ -116,9 +121,10 @@ async function main(): Promise<void> {
     config.stateRules,
     {
       emit: (state) => {
-        // `state` param preserved for the future BLE transport (S2.5.15). The
-        // server reads its own copy from the state machine.
-        logger.info({ state }, '[stub transport] state'); // SPEC GAP: real transport wiring deferred
+        // The wire (S2.5.15). `session` is null when there is no transport at
+        // all — no hardware and no `--simulate` — and the dashboard is then the
+        // only display. The server reads its own copy from the state machine.
+        session?.sendState(state);
         server.notifyState();
       },
       record: (type, data) => {
@@ -164,7 +170,12 @@ async function main(): Promise<void> {
     publicDir: join(import.meta.dirname, 'server', 'public'),
     getHealth: () => ({
       adapters: Object.fromEntries(adapters.map((a) => [a.name, a.health()])),
-      transport: { kind: 'stub', connected: false, reconnects: 0, latency: { p50: 0, p95: 0 } },
+      transport: {
+        kind: session ? 'sim' : 'none',
+        connected: session?.linkHealthy() ?? false,
+        reconnects: 0,
+        latency: { p50: 0, p95: 0 },
+      },
     }),
   });
 
@@ -183,8 +194,26 @@ async function main(): Promise<void> {
     );
   });
 
+  if (simulate) {
+    // The firmware doesn't exist yet, so `SimTransport` answers hello/ack/
+    // state_applied. Everything above it — handshake, heartbeat, retry, safe
+    // mode, the latency histogram — is the same code the CoreS3 will run against.
+    session = new ProtocolSession(new SimTransport(), config.ble, {
+      onInboundEvent: (kind, detail) => server.handleDeviceInput(kind, detail),
+      onLinkChange: (healthy) => {
+        logger.warn({ healthy }, healthy ? 'ble link up' : 'ble link dead');
+        // D16: a face nobody can update is a face that lies.
+        if (!healthy) stateMachine.forceSafeState();
+        server.notifyState();
+      },
+      metrics,
+      logger,
+    });
+  }
+
   attentionManager.start();
   await server.start();
+  if (session) await session.start();
   logger.info({ host: config.server.host, port: config.server.port }, 'bridge listening');
 
   // D22. Writes to the recorder, not the bus: it is telemetry about the user,
@@ -217,6 +246,12 @@ async function main(): Promise<void> {
     {
       name: 'trust-check',
       run: async () => trustCheck.stop(),
+    },
+    {
+      name: 'ble-session',
+      run: async () => {
+        if (session) await session.stop();
+      },
     },
     {
       name: 'adapters',

@@ -24,7 +24,7 @@ import {
   SeveritySchema,
   newEvent,
 } from '../core/events.js';
-import { nextMode } from '../core/modes.js';
+import { type Mode, nextMode } from '../core/modes.js';
 import type { StateMachine } from '../core/state-machine.js';
 import { TOKEN_ACCOUNT, TOKEN_SERVICE } from '../platform/platform.js';
 import type { Platform } from '../platform/platform.js';
@@ -616,17 +616,66 @@ export class BridgeServer {
     }
   }
 
+  /**
+   * Real input coming off the firmware over BLE (`ProtocolSession.onInboundEvent`).
+   * Deliberately the same semantics as the `/sim/*` endpoints below: button C
+   * cycles the mode, A approves, B denies, a head tap approves, a hold sleeps.
+   * If the two ever diverge, the simulator stops being evidence about the robot.
+   */
+  handleDeviceInput(kind: 'button' | 'touch', detail: unknown): void {
+    if (kind === 'button') {
+      const button = (detail as { button?: unknown })?.button;
+      if (button === 'C') {
+        this.#cycleMode();
+        return;
+      }
+      if (button !== 'A' && button !== 'B') return;
+      const action = button === 'A' ? 'approve' : 'deny';
+      if (this.#resolveFirstPendingPermission(action, 'button')) return;
+      this.#opts.bus.publish(
+        newEvent({
+          source: 'firmware',
+          category: 'button_pressed',
+          severity: 'low',
+          payload: { button },
+        }),
+      );
+      return;
+    }
+
+    const gesture = (detail as { gesture?: unknown })?.gesture;
+    if (gesture === 'tap' && this.#resolveFirstPendingPermission('approve', 'head')) return;
+    if (gesture === 'hold') {
+      this.#opts.attentionManager.setMode('SLEEP');
+      this.#opts.stateMachine.apply(this.#opts.attentionManager.snapshot().active);
+      this.notifyState();
+      return;
+    }
+    if (typeof gesture !== 'string') return;
+    this.#opts.bus.publish(
+      newEvent({
+        source: 'firmware',
+        category: 'touch_head',
+        severity: 'low',
+        payload: { gesture },
+      }),
+    );
+  }
+
+  #cycleMode(): Mode {
+    const next = nextMode(this.#opts.attentionManager.snapshot().mode);
+    this.#opts.attentionManager.setMode(next);
+    this.#opts.stateMachine.apply(this.#opts.attentionManager.snapshot().active);
+    this.notifyState();
+    return next;
+  }
+
   #handleSimMode(res: ServerResponse): void {
     if (!this.#opts.simulate) {
       sendJson(res, 403, { error: 'simulation endpoints disabled in production' });
       return;
     }
-    const current = this.#opts.attentionManager.snapshot().mode;
-    const next = nextMode(current);
-    this.#opts.attentionManager.setMode(next);
-    this.#opts.stateMachine.apply(this.#opts.attentionManager.snapshot().active);
-    this.notifyState();
-    sendJson(res, 200, { mode: next });
+    sendJson(res, 200, { mode: this.#cycleMode() });
   }
 
   async #handleSimEmotion(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -751,10 +800,7 @@ export class BridgeServer {
     sendJson(res, 202, { gesture, id: event.id });
   }
 
-  #resolveFirstPendingPermission(
-    action: 'approve' | 'deny',
-    source: ResolveSource,
-  ): string | null {
+  #resolveFirstPendingPermission(action: 'approve' | 'deny', source: ResolveSource): string | null {
     if (!this.#opts.claudeAdapter) return null;
     for (const [sessionId, session] of this.#opts.claudeAdapter.sessions()) {
       if (session.pendingPermission) {
