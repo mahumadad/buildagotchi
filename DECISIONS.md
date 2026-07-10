@@ -392,22 +392,28 @@ Métrica automatizable de "¿le creo a la cara?":
 - **Definición**: contar cuántas veces por día el usuario abre/enfoca Claude Code
   (via Accessibility API en macOS) **mientras el buddy está en estado
   NEUTRAL/HAPPY** (nada pendiente según el buddy).
-- **Permiso macOS requerido**: `kTCCServiceAccessibility` (System Settings →
-  Privacy & Security → Accessibility, agregar el bridge). Como es un
-  LaunchAgent (D2/S1.5), el consent dialog aparece en la sesión del usuario
-  la primera vez que el adapter intenta leer el foco.
-- **Si el usuario no lo concede**: la métrica se deshabilita con warning
-  visible en el dashboard ("Trust check disabled — Accessibility permission
-  not granted"). NO es blocking — el resto del sistema opera igual, solo se
-  pierde esta señal para el Gate 1. Fallback subjetivo: se marca en NOTES.md
-  al hacer la validación.
+- **Permiso macOS requerido**: ~~`kTCCServiceAccessibility`~~ **ninguno**.
+  Corregido el 2026-07-10 al implementarlo: `lsappinfo front` + `lsappinfo info
+  -only bundleid` es LaunchServices, API pública, sin TCC y sin diálogo de
+  consentimiento. `osascript` sí habría necesitado permiso de Automatización;
+  `lsappinfo` no. Esta decisión especificaba —y presupuestaba— un permiso que no
+  existe.
+- ~~**Si el usuario no lo concede**~~: rama muerta, no hay permiso que conceder.
+  `readFrontmostBundleId()` devuelve `null` ante cualquier fallo y se pierde la
+  muestra, no el bridge.
 - **Filtro anti-falsos-positivos**: solo cuenta si Claude no tenía foco en los 30s
   previos. Re-activaciones rápidas (alt-tab, notif, etc.) no cuentan.
 - **Fase burn-in**: los primeros 3 días de uso no cuentan para el Gate 1 (curva de
   aprendizaje del usuario, no del sistema).
 - Alta cuenta ⇒ el usuario verifica constantemente ⇒ no confía en la cara.
 - Baja cuenta ⇒ confía. Meta MVP (D20): trust_checks/día ≤ 2 en las semanas 2 y 3.
-- Se registra en el Event Recorder como evento sintético `category: "trust_check"`.
+- Se registra en el Event Recorder como evento sintético `category: "trust_check"`,
+  escrito **directo** por el adapter: no pasa por el bus ni por el
+  AttentionManager. Un evento que el robot atendiera cambiaría la cara que la
+  métrica usa como condición.
+- **Falso positivo conocido**: las apps se roban el foco solas (Claude Desktop y
+  Chrome, medidos). Ver **D-12** en `DEBT.md`. La métrica sesga hacia arriba, o
+  sea hacia "el usuario no confía" — el lado inseguro para el Gate 1.
 
 Post-MVP: extender a otras fuentes (revisar Jira, refrescar el mail) para triangular.
 

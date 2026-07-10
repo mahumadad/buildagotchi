@@ -33,31 +33,34 @@ un bug.
 
 ---
 
-## D-09 — el trust check de D22 no existe
+## D-12 — el trust check cuenta focos que el usuario no hizo
 
-**Dónde**: en ninguna parte. `grep -r trust_check bridge/src` no devuelve nada.
+**Dónde**: `bridge/src/adapters/trust-check.ts`, y antes que ahí, en la
+definición de D22.
 
-**El problema**: D22 define la métrica con precisión —contar cuántas veces al día
-el usuario enfoca Claude Code mientras el buddy está en NEUTRAL/HAPPY, vía
-Accessibility API— e incluso describe el diálogo de permiso de macOS y el filtro
-anti-falsos-positivos de 30 s. No hay una línea de código. Nadie emite
-`category: trust_check` y no existe ningún lector de foco de ventana en `src/`.
-La decisión está escrita como si estuviera implementada.
+**El problema**: la métrica cuenta la *transición* de foco hacia Claude. Pero las
+apps se roban el foco solas. Observado el 2026-07-10 con `lsappinfo` muestreando
+cada segundo: Claude Desktop recupera el frente ~3 s después de que otra app lo
+tome, sin intervención del usuario, y Chrome hace lo mismo. Si una de esas
+auto-activaciones ocurre más de 30 s después del último blur, el filtro
+anti-rebote la deja pasar y se graba un trust check que nadie hizo.
 
-**Por qué no explotó**: el Gate 1 nunca se ha corrido. Necesita hardware.
+**Por qué no explotó**: la métrica es nueva y el Gate 1 no se ha corrido.
 
-**Qué lo haría explotar**: llega el CoreS3, se usan tres semanas, y al evaluar
-resulta que la métrica que D20 llama "confío en la cara" no tiene datos. Tres
-semanas de medición inservibles para ese criterio.
+**Qué lo haría explotar**: es el modo de fallo *silencioso* peor posible para
+D20. Un trust check inflado dice "el usuario no confía en la cara" y el Gate 1
+concluye no seguir con Fase 3. La métrica no se equivoca hacia el lado seguro.
 
-**Fix**: un adapter que lea la app en foco (`NSWorkspace.frontmostApplication`
-basta; no hace falta `kTCCServiceAccessibility` para el bundle id) y emita el
-evento sintético. D22 ya especifica el filtro de 30 s y el burn-in de 3 días.
-Si el permiso no se concede, la métrica se deshabilita con warning — D22 dice
-que no es bloqueante.
+**Fix**: no hay uno obvio, y por eso es deuda y no un bug que arreglar de paso.
+Ideas, en orden de coste: (a) correlacionar con actividad de input real —
+`CGEventSourceSecondsSinceLastEventType` da segundos desde el último teclado o
+mouse, y un foco sin input en el último segundo no lo hizo un humano; (b)
+descartar el foco si la app anterior era también Claude; (c) medir la métrica
+solo cuando el bridge no acaba de emitir un evento.
 
-**Costo**: ~medio día. Debe estar listo **antes** de que llegue el hardware, no
-después: es una precondición del Gate 1, no un extra.
+La (a) parece correcta y barata, y necesita medirse antes de creerle.
+
+**Costo**: ~2 h más un día de datos reales para calibrar el umbral.
 
 ---
 
@@ -212,3 +215,23 @@ Se dejan acá con la fecha para no re-descubrirlas.
 
   Verificado reintroduciendo el error original —una llamada a `resolve()` con dos
   argumentos— y comprobando que el typecheck lo atrapa. La suite seguía verde.
+
+- ~~**El trust check de D22 no existía**~~ (era D-09) — resuelto 2026-07-10.
+  Nuevo `TrustCheckAdapter`: cuenta la transición de foco hacia Claude, ignora
+  los re-focos dentro de 30 s, y solo cuenta cuando la cara está NEUTRAL o HAPPY
+  (si el buddy pide algo, el usuario le está respondiendo, no desconfiando).
+  Escribe **directo al Event Recorder**, no al bus: es telemetría sobre el
+  usuario, y un evento que el robot atendiera perturbaría el estado que la
+  métrica observa.
+
+  **D22 estaba equivocada en su parte más cara**: daba por hecho que hacía falta
+  `kTCCServiceAccessibility` y un diálogo de consentimiento, y especificaba una
+  rama entera de "si el usuario no lo concede". No hace falta ninguna:
+  `lsappinfo` es LaunchServices, API pública, cero permisos. Verificado en la
+  máquina real antes de escribir el adapter.
+
+  Nueve tests, y los verifiqué mutando el código: quitar el filtro de 30 s rompe
+  uno, contar con la cara DOUBTFUL rompe dos. Un test que no falla cuando rompes
+  lo que dice proteger no prueba nada.
+
+  Dejó abierta **D-12**: las apps se roban el foco solas.
