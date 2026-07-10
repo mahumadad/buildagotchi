@@ -11,6 +11,17 @@ import { EventRecorder } from '../src/recorder/recorder.js';
 import { Metrics } from '../src/server/metrics.js';
 import { BridgeServer } from '../src/server/server.js';
 
+/**
+ * `Response.json()` is typed `unknown`. These tests assert on JSON shapes the
+ * server itself owns, so a checked cast here is honest — and it keeps D-11's
+ * typecheck from drowning in 10 identical `unknown` errors.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: assertions on server-owned JSON
+async function json(res: Response): Promise<any> {
+  return res.json();
+}
+
+
 const STORED_TOKEN = 'stored-secret-token';
 
 function makePlatform(token: string | null): Platform {
@@ -116,7 +127,7 @@ describe('BridgeServer', () => {
     await start();
     const res = await fetch(`${baseUrl}/state`);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await json(res);
     expect(body.mode).toBe('NORMAL');
     expect(body.active).toBeNull();
     expect(body.queue).toEqual([]);
@@ -128,7 +139,7 @@ describe('BridgeServer', () => {
     await start();
     const res = await fetch(`${baseUrl}/health`);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await json(res);
     expect(body.bridge).toBe('ok');
     expect(body.transport.kind).toBe('sim');
   });
@@ -143,7 +154,7 @@ describe('BridgeServer', () => {
     });
     const res = await fetch(`${baseUrl}/events?limit=1`);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await json(res);
     expect(body).toHaveLength(1);
     expect(body[0].data).toEqual({ hello: 'world' });
   });
@@ -161,7 +172,7 @@ describe('BridgeServer', () => {
     await start();
     const res = await fetch(`${baseUrl}/nope`);
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: 'not found' });
+    expect(await json(res)).toEqual({ error: 'not found' });
   });
 
   it('POST /events without stored token and not --simulate returns 503', async () => {
@@ -209,7 +220,7 @@ describe('BridgeServer', () => {
       body: JSON.stringify({ source: 'test', category: 'x', severity: 'low' }),
     });
     expect(res.status).toBe(202);
-    const body = await res.json();
+    const body = await json(res);
     expect(body.outcome.kind).toBe('accepted');
     expect(accepted).toHaveLength(1);
     expect(accepted[0]?.source).toBe('external:test');
@@ -233,7 +244,7 @@ describe('BridgeServer', () => {
       body: JSON.stringify({ source: 'test' }),
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await json(res);
     expect(Array.isArray(body.issues)).toBe(true);
   });
 

@@ -15,7 +15,9 @@ function deps(now?: () => number) {
         return { set: vi.fn() };
       },
     },
-    now,
+    // Spread, not `now,`: under exactOptionalPropertyTypes an explicit
+    // `now: undefined` is not the same as an absent `now` (D-11).
+    ...(now ? { now } : {}),
     _gauges: gauges,
   };
 }

@@ -36,7 +36,12 @@ async function setupServer() {
   const tmp = mkdtempSync(join(tmpdir(), 'server-attention-'));
   const metrics = new Metrics();
   const recorder = new EventRecorder({ dir: tmp, retentionDays: 30 });
-  const bus = new EventBus(metrics, { onAccepted: () => {}, onOutcome: () => {} });
+  // Was `new EventBus(metrics, ...)`: a Metrics where a DedupConfig goes, so
+  // windowMs was undefined. Harmless only because this file never exercises dedup.
+  const bus = new EventBus(
+    { windowMs: 60_000, autoMuteAfter: 10 },
+    { onAccepted: () => {}, onOutcome: () => {} },
+  );
   const attentionManager = new AttentionManager(
     {
       ttlBySeverity: {
@@ -164,7 +169,9 @@ describe('M14 — SSE state payload', () => {
     // Apply so the state machine reflects it.
     ctx.stateMachine.apply(ctx.attentionManager.snapshot().active);
 
-    const httpState = await fetch(`${ctx.url}/state`).then((r) => r.json());
+    const httpState = (await fetch(`${ctx.url}/state`).then((r) => r.json())) as {
+      resolvedState: unknown;
+    };
     const sseState = await firstSseState(ctx.url);
     expect(sseState.resolvedState).toEqual(httpState.resolvedState);
   });

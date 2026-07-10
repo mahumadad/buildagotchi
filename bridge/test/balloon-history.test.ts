@@ -60,7 +60,8 @@ describe('BalloonHistory (M15)', () => {
   it('#7: recent() returns a defensive copy — callers cannot corrupt the buffer', () => {
     const h = new BalloonHistory(3);
     h.push('A');
-    const snap = h.recent() as { text: string }[];
+    // recent() returns readonly on purpose; the double cast is the point of the test.
+    const snap = h.recent() as unknown as { text: string }[];
     // Mutating the returned array shouldn't affect the buffer.
     snap.push({ text: 'X' } as unknown as (typeof snap)[number]);
     expect(h.recent().length).toBe(1);

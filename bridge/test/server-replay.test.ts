@@ -12,6 +12,13 @@ import { EventRecorder } from '../src/recorder/recorder.js';
 import { Metrics } from '../src/server/metrics.js';
 import { BridgeServer, type HealthPayload } from '../src/server/server.js';
 
+const CTX = {
+  metabolicScore: null,
+  activeMode: 'NORMAL',
+  bleHealthy: false,
+  adapterHealth: {},
+} as const;
+
 /**
  * M16 tests. The interesting checks are the ones that keep the replay from
  * becoming an arbitrary-file-read or a way to poison the ndjson day-log:
@@ -39,11 +46,11 @@ function makePlatform(): Platform {
 async function setupServer(opts: { simulate: boolean; recorderDir: string }) {
   const metrics = new Metrics();
   const recorder = new EventRecorder({ dir: opts.recorderDir, retentionDays: 30 });
-  const bus = new EventBus(metrics, {
+  const bus = new EventBus({ windowMs: 60_000, autoMuteAfter: 10 }, {
     // Match index.ts: accepted events are appended to the recorder. Without
     // this the M16-5 assertion has no source of truth to look up.
     onAccepted: (e) =>
-      recorder.record({ line_type: 'event', ts: Date.now(), context: {}, data: e }),
+      recorder.record({ line_type: 'event', ts: Date.now(), context: CTX, data: e }),
     onOutcome: () => {},
   });
   const attentionManager = new AttentionManager(

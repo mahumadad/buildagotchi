@@ -1,0 +1,16 @@
+// Typechecks the tests, which `tsconfig.json` cannot: its `rootDir` is `src`,
+// and widening `include` would drag `test/` into `dist/`. Same strictness, no
+// emit (D-11).
+//
+// Without this, vitest transpiles the tests without checking them. That is how
+// five calls to `resolve()` kept compiling after it gained a required third
+// argument, silently passing `undefined`, with the whole suite green.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src", "test"]
+}

@@ -88,29 +88,6 @@ va en Fase 1B, junto a D-03.
 
 ---
 
-## D-11 — `tsc` no typechequea los tests
-
-**Dónde**: `bridge/tsconfig.json` → `"include": ["src"]`.
-
-**El problema**: los archivos de `test/` nunca pasan por el compilador. Vitest los
-transpila sin verificar tipos.
-
-**Por qué no explotó**: los tests fallan igual cuando el código está mal. Lo que
-se pierde es el error de tipo *en el test mismo*.
-
-**Qué lo haría explotar**: ya lo hizo, en pequeño. Al agregar el tercer parámetro
-obligatorio a `resolve()`, cinco llamadas en `attention.test.ts` siguieron
-compilando y pasando `undefined` como `source`, grabando líneas sin origen. La
-suite estaba verde. Lo encontré grepeando, no el compilador.
-
-**Fix**: agregar `test` al `include`, o un `tsconfig.test.json`. Ojo: puede
-destapar errores de tipo preexistentes en los tests, y por eso no entra en el
-commit que descubrió el problema.
-
-**Costo**: 10 min más lo que salga a la luz.
-
----
-
 ## Resueltas
 
 Se dejan acá con la fecha para no re-descubrirlas.
@@ -220,3 +197,18 @@ Se dejan acá con la fecha para no re-descubrirlas.
   `personality.test.ts` **asertaba el bug**: esperaba `myapp: {command}` en la
   pantalla para un permiso sin `command`. Es el tercer test de este repo que
   documentaba un defecto como si fuera contrato.
+
+- ~~**`tsc` no typechequeaba los tests**~~ (era D-11) — resuelto 2026-07-10.
+  `tsconfig.json` incluía solo `src`, y ensancharlo arrastraba `test/` a `dist/`
+  por el `rootDir`. Ahora hay un `tsconfig.test.json` que extiende al de siempre
+  con `noEmit`, y `npm run typecheck` corre los dos.
+
+  Destapó **30 errores** en 6 archivos. La mayoría eran ruido (`unknown` de
+  `res.json()`, `exactOptionalPropertyTypes` sobre un `now: undefined`), pero dos
+  eran bugs reales dormidos: `server-attention.test.ts` y `server-replay.test.ts`
+  construían el `EventBus` pasándole un `Metrics` donde va un `DedupConfig`, así
+  que `windowMs` quedaba `undefined`. Inofensivo solo porque esos archivos no
+  ejercitan el dedup.
+
+  Verificado reintroduciendo el error original —una llamada a `resolve()` con dos
+  argumentos— y comprobando que el typecheck lo atrapa. La suite seguía verde.

@@ -85,8 +85,9 @@ function makeClaudeAdapter() {
     sessions: vi.fn(() => sessions),
     resolvePermission: vi.fn((sessionId: string, action: 'approved' | 'denied') => {
       const s = sessions.get(sessionId);
-      if (s?.pendingPermission) {
-        const eventId = s.pendingPermission.eventId;
+      const pending = s?.pendingPermission as { eventId: string } | undefined;
+      if (s && pending) {
+        const eventId = pending.eventId;
         s.pendingPermission = undefined;
         s.state = action === 'approved' ? 'working' : 'idle';
         return eventId;
@@ -139,7 +140,8 @@ describe('BridgeServer dashboard (M8)', () => {
         transport: { kind: 'sim', connected: true, reconnects: 0, latency: { p50: 0, p95: 0 } },
       }),
       publicDir: PUBLIC_DIR,
-      claudeAdapter: opts.withClaudeAdapter === false ? undefined : claudeAdapter,
+      // exactOptionalPropertyTypes: an absent key, not an explicit `undefined`.
+      ...(opts.withClaudeAdapter === false ? {} : { claudeAdapter }),
     });
     await server.start();
     const addr = server.address();

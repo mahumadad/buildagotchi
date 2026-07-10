@@ -40,7 +40,9 @@ describe('MCP server', () => {
       `${BRIDGE_URL}/events`,
       expect.objectContaining({ method: 'POST' }),
     );
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const call = mockFetch.mock.calls[0];
+    if (!call) throw new Error('fetch was never called');
+    const body = JSON.parse(call[1].body);
     expect(body.source).toBe('test');
     expect(body.severity).toBe('high');
     expect((result.content as { text: string }[])[0]?.text).toContain('202');
@@ -53,7 +55,9 @@ describe('MCP server', () => {
       name: 'set_face',
       arguments: { emotion: 'HAPPY', ttlMs: 3000 },
     });
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const call = mockFetch.mock.calls[0];
+    if (!call) throw new Error('fetch was never called');
+    const body = JSON.parse(call[1].body);
     expect(body.source).toBe('mcp:set_face');
     expect(body.payload.emotion).toBe('HAPPY');
   });
@@ -65,7 +69,9 @@ describe('MCP server', () => {
       name: 'set_face',
       arguments: { emotion: 'SAD', ttlMs: 5000, balloon: 'oops' },
     });
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const call = mockFetch.mock.calls[0];
+    if (!call) throw new Error('fetch was never called');
+    const body = JSON.parse(call[1].body);
     expect(body.payload.balloon).toBe('oops');
   });
 
