@@ -186,3 +186,62 @@ describe('StateMachine', () => {
     expect(sm.current().balloon).toBe('oops');
   });
 });
+
+/**
+ * D-10. Gate 1 wants p95 of D23's budget: critical event → the face changes.
+ * That path has two legs. The firmware leg (`bridge_ts → fw_applied_ts`) is
+ * already instrumented in `ble/protocol.ts` and unreachable until the CoreS3
+ * exists. The bridge's own leg — event timestamp → resolved state — was never
+ * measured at all, and the histograms that do exist die on restart.
+ *
+ * The `state_change` line already gets written on every transition, so the
+ * latency rides along and p95 gets computed offline, over the whole retention
+ * window.
+ */
+describe('StateMachine — latency lands in the recorder (D-10)', () => {
+  const RULE: StateRule[] = [{ match: { severity: 'critical' }, state: { emotion: 'ANGRY' } }];
+
+  it('state_change carries the ms from the event to the resolved state', () => {
+    let clock = 5_000;
+    const d = deps(() => clock);
+    const sm = new StateMachine(RULE, d);
+
+    const e = { ...newEvent({ source: 's', category: 'c', severity: 'critical', payload: {} }) };
+    (e as { timestamp: number }).timestamp = 4_850;
+    clock = 5_000;
+    sm.apply({ event: e, deadline: null });
+
+    expect(d.record).toHaveBeenCalledWith(
+      'state_change',
+      expect.objectContaining({ eventId: e.id, latencyMs: 150 }),
+    );
+  });
+
+  it('the background mood has no event, so it carries no latency', () => {
+    const d = deps(() => 5_000);
+    const sm = new StateMachine(RULE, d);
+    const e = newEvent({ source: 's', category: 'c', severity: 'critical', payload: {} });
+    sm.apply({ event: e, deadline: null });
+    d.record.mockClear();
+
+    sm.apply(null); // back to background mood
+
+    const call = d.record.mock.calls[0];
+    expect(call).toBeDefined();
+    expect(call?.[1]).not.toHaveProperty('latencyMs');
+  });
+
+  it('a clock that goes backwards does not record a negative latency', () => {
+    // NTP steps, sleep/wake. A negative number would poison the p95 silently.
+    let clock = 5_000;
+    const d = deps(() => clock);
+    const sm = new StateMachine(RULE, d);
+
+    const e = { ...newEvent({ source: 's', category: 'c', severity: 'critical', payload: {} }) };
+    (e as { timestamp: number }).timestamp = 6_000; // event "from the future"
+    sm.apply({ event: e, deadline: null });
+
+    const data = d.record.mock.calls[0]?.[1] as { latencyMs?: number };
+    expect(data.latencyMs).toBe(0);
+  });
+});

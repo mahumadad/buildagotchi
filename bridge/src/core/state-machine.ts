@@ -195,7 +195,7 @@ export class StateMachine {
     // previous policy is stuck forever. Setting it here decouples policy
     // updates from wire emissions.
     this.#balloon = resolved.balloon;
-    this.#transition(resolved.state, input?.event.id);
+    this.#transition(resolved.state, input?.event.id, input?.event.timestamp);
   }
 
   #backgroundMood(): { state: ResolvedState; balloon: Balloon } {
@@ -328,12 +328,23 @@ export class StateMachine {
     return criticalCount / this.#criticalSamples.length;
   }
 
-  #transition(next: ResolvedState, eventId: string | undefined): void {
+  #transition(next: ResolvedState, eventId: string | undefined, eventTs?: number): void {
     if (statesEqual(this.#current, next)) return;
 
     const from = this.#current;
     this.#current = next;
-    this.#deps.record('state_change', { from, to: next, eventId });
+    this.#deps.record('state_change', {
+      from,
+      to: next,
+      eventId,
+      // D-10: the bridge's half of D23's budget (event → face resolved). The
+      // firmware half is `state_latency_ms` in ble/protocol.ts. Persisted on the
+      // line rather than kept in a histogram, which dies on restart while Gate 1
+      // needs a p95 over three weeks. Clamped at 0: an NTP step or a sleep/wake
+      // can put the event in the future, and a negative sample poisons the p95
+      // without ever looking wrong.
+      ...(eventTs === undefined ? {} : { latencyMs: Math.max(0, this.#now() - eventTs) }),
+    });
     if (from.emotion !== next.emotion) {
       this.#deps.metrics.counter('face_changes_total').inc();
     }
