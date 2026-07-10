@@ -65,7 +65,7 @@ export class DemoAdapter implements Adapter {
     this.#at(3_000, () => this.#publish('chrome', 'exception', 'critical'));
     this.#at(6_000, () => {
       const permission = this.#publish('claude', 'permission', 'critical');
-      this.#at(RESOLVE_DELAY_MS, () => this.#am.resolve(permission.id, 'approved'));
+      this.#at(RESOLVE_DELAY_MS, () => this.#am.resolve(permission.id, 'approved', 'head'));
     });
     this.#at(LOOP_MS, () => this.#scheduleLoop());
   }

@@ -15,6 +15,13 @@ export interface TtlOverride {
   ttl: number | null;
 }
 
+/**
+ * Where a resolution came from. `head` and `button` are the robot; `dashboard`
+ * and `external` (a hook, e.g. approving in the Claude chat) are "the terminal"
+ * in D20's sense. Gate 1 wants head+button ≥ 50%.
+ */
+export type ResolveSource = 'head' | 'button' | 'dashboard' | 'external';
+
 export interface AmConfig {
   ttlBySeverity: Record<Severity, number>;
   ttlOverrides: TtlOverride[];
@@ -85,6 +92,11 @@ export class AttentionManager {
   }
 
   setMode(m: Mode): void {
+    if (m === this.#mode) return;
+    // Gate 1 (D20) asks whether FOCUS gets used at least once a day, and for how
+    // long. Only the drops caused by a mode change used to be recorded, so
+    // entering FOCUS on a quiet queue left no trace at all.
+    this.#deps.record('am_decision', { action: 'mode_changed', from: this.#mode, to: m });
     this.#mode = m;
     if (m === 'NORMAL') return;
 
@@ -117,7 +129,7 @@ export class AttentionManager {
     // operation the user had already approved.
     const resolvesEventId = e.payload.resolvesEventId;
     if (typeof resolvesEventId === 'string') {
-      this.resolve(resolvesEventId, 'dismissed');
+      this.resolve(resolvesEventId, 'dismissed', 'external');
     }
 
     if (!severityPassesMode(e.severity, this.#mode)) {
@@ -161,9 +173,18 @@ export class AttentionManager {
     this.#updateQueueGauge();
   }
 
-  resolve(eventId: string, reason: 'approved' | 'denied' | 'dismissed'): void {
+  /**
+   * `source` exists for Gate 1 (D20): "I approved ≥50% of my permissions from
+   * the head, not the terminal". Without it, the head, the dashboard and the
+   * Claude chat all wrote the same line, and the criterion was uncountable.
+   */
+  resolve(
+    eventId: string,
+    reason: 'approved' | 'denied' | 'dismissed',
+    source: ResolveSource,
+  ): void {
     if (this.#active && this.#active.event.id === eventId) {
-      this.#deps.record('am_decision', { action: 'resolved', reason, eventId });
+      this.#deps.record('am_decision', { action: 'resolved', reason, source, eventId });
       this.#active = null;
       this.#promote(Date.now());
       this.#updateQueueGauge();
@@ -172,6 +193,9 @@ export class AttentionManager {
 
     const index = this.#queue.findIndex((item) => item.event.id === eventId);
     if (index >= 0) {
+      // Recorded too: a permission approved while it waited in the queue is
+      // still a permission the user approved, and Gate 1 has to count it.
+      this.#deps.record('am_decision', { action: 'resolved', reason, source, eventId });
       this.#queue.splice(index, 1);
       this.#updateQueueGauge();
       return;

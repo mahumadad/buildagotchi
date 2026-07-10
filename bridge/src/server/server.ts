@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join, sep as pathSep, resolve } from 'node:path';
 import { z } from 'zod';
 import type { ClaudeAdapter } from '../adapters/claude-adapter.js';
-import type { AttentionManager } from '../core/attention.js';
+import type { AttentionManager, ResolveSource } from '../core/attention.js';
 import type { BalloonHistory } from '../core/balloon-history.js';
 import type { EventBus } from '../core/bus.js';
 import {
@@ -605,7 +605,11 @@ export class BridgeServer {
     const mapped = action === 'approve' ? 'approved' : 'denied';
     const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, mapped);
     if (eventId) {
-      this.#opts.attentionManager.resolve(eventId, mapped === 'approved' ? 'approved' : 'denied');
+      this.#opts.attentionManager.resolve(
+        eventId,
+        mapped === 'approved' ? 'approved' : 'denied',
+        'dashboard',
+      );
       sendJson(res, 200, { resolved: true });
     } else {
       sendJson(res, 404, { error: 'no pending permission' });
@@ -685,7 +689,7 @@ export class BridgeServer {
       return;
     }
     const action = button === 'A' ? 'approve' : 'deny';
-    const resolved = this.#resolveFirstPendingPermission(action);
+    const resolved = this.#resolveFirstPendingPermission(action, 'button');
     if (resolved) {
       sendJson(res, 200, { button, action, resolved: true, sessionId: resolved });
       return;
@@ -724,7 +728,7 @@ export class BridgeServer {
       return;
     }
     if (gesture === 'tap') {
-      const resolved = this.#resolveFirstPendingPermission('approve');
+      const resolved = this.#resolveFirstPendingPermission('approve', 'head');
       if (resolved) {
         sendJson(res, 200, { gesture, action: 'approve', resolved: true, sessionId: resolved });
         return;
@@ -747,14 +751,17 @@ export class BridgeServer {
     sendJson(res, 202, { gesture, id: event.id });
   }
 
-  #resolveFirstPendingPermission(action: 'approve' | 'deny'): string | null {
+  #resolveFirstPendingPermission(
+    action: 'approve' | 'deny',
+    source: ResolveSource,
+  ): string | null {
     if (!this.#opts.claudeAdapter) return null;
     for (const [sessionId, session] of this.#opts.claudeAdapter.sessions()) {
       if (session.pendingPermission) {
         const mapped = action === 'approve' ? 'approved' : 'denied';
         const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, mapped);
         if (eventId) {
-          this.#opts.attentionManager.resolve(eventId, mapped);
+          this.#opts.attentionManager.resolve(eventId, mapped, source);
           return sessionId;
         }
       }

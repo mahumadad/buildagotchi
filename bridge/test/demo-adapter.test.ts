@@ -64,7 +64,7 @@ describe('DemoAdapter', () => {
 
     expect(resolve).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(14_000); // t = 6 + 14 = 20s
-    expect(resolve).toHaveBeenCalledWith(permission.id, 'approved');
+    expect(resolve).toHaveBeenCalledWith(permission.id, 'approved', 'head');
 
     await vi.advanceTimersByTimeAsync(10_001); // t = 30s -> loop repeats
     expect(published).toHaveLength(4);

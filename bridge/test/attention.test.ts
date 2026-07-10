@@ -75,7 +75,7 @@ describe('AttentionManager', () => {
     am.tick();
     expect(am.snapshot().active?.event.id).toBe(permission.id);
 
-    am.resolve(permission.id, 'approved');
+    am.resolve(permission.id, 'approved', 'head');
     expect(am.snapshot().active).toBeNull();
   });
 
@@ -117,7 +117,7 @@ describe('AttentionManager', () => {
     expect(am.snapshot().active?.event.id).toBe(critical.id);
     expect(am.snapshot().queue.map((e) => e.id)).toEqual([medium.id]);
 
-    am.resolve(critical.id, 'approved');
+    am.resolve(critical.id, 'approved', 'head');
     expect(am.snapshot().active?.event.id).toBe(medium.id);
   });
 
@@ -241,7 +241,7 @@ describe('AttentionManager', () => {
     const am = new AttentionManager(baseConfig({ transitionToBackgroundMoodDelay: 2_000 }), d);
     const e = ev();
     am.push(e);
-    am.resolve(e.id, 'dismissed');
+    am.resolve(e.id, 'dismissed', 'external');
 
     am.tick(); // schedules the idle deadline
     d.onActiveChange.mockClear();
@@ -260,7 +260,7 @@ describe('AttentionManager', () => {
     const am = new AttentionManager(baseConfig({ transitionToBackgroundMoodDelay: 2_000 }), d);
     const e = ev();
     am.push(e);
-    am.resolve(e.id, 'dismissed');
+    am.resolve(e.id, 'dismissed', 'external');
     am.tick();
 
     vi.advanceTimersByTime(1_000);
@@ -334,8 +334,96 @@ describe('AttentionManager', () => {
     });
     expect(am.snapshot().active?.event.id).toBe(permission.id);
 
-    am.resolve(permission.id, 'approved');
+    am.resolve(permission.id, 'approved', 'head');
     expect(am.snapshot().active?.event.id).toBe(meeting.id);
     expect(d.onActiveChange).toHaveBeenLastCalledWith(expect.objectContaining({ event: meeting }));
+  });
+});
+
+/**
+ * Gate 1 (D20) is the go/no-go for phase 3+, and it asks for hard numbers from
+ * the Event Recorder. Two of them were unmeasurable: nothing recorded WHERE an
+ * approval came from, and nothing recorded that the user entered FOCUS at all.
+ * Audited 2026-07-10 against a live bridge.
+ */
+describe('AttentionManager — what Gate 1 needs to be able to count', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('records where an approval came from: the head, not the terminal (D20)', () => {
+    const d = deps();
+    const am = new AttentionManager(baseConfig(), d);
+    const e = ev({ severity: 'critical' });
+    am.push(e);
+
+    am.resolve(e.id, 'approved', 'head');
+
+    expect(d.record).toHaveBeenCalledWith('am_decision', {
+      action: 'resolved',
+      reason: 'approved',
+      source: 'head',
+      eventId: e.id,
+    });
+  });
+
+  it('records the source when the event is resolved while still queued', () => {
+    const d = deps();
+    const am = new AttentionManager(baseConfig(), d);
+    const active = ev({ severity: 'critical' });
+    const queued = ev({ severity: 'low' });
+    am.push(active);
+    am.push(queued); // lower severity → sits in the queue
+    d.record.mockClear();
+
+    am.resolve(queued.id, 'approved', 'dashboard');
+
+    expect(d.record).toHaveBeenCalledWith('am_decision', {
+      action: 'resolved',
+      reason: 'approved',
+      source: 'dashboard',
+      eventId: queued.id,
+    });
+  });
+
+  it('records entering FOCUS even when there is nothing to drop', () => {
+    const d = deps();
+    const am = new AttentionManager(baseConfig(), d); // empty queue, no active
+    am.setMode('FOCUS');
+
+    expect(d.record).toHaveBeenCalledWith('am_decision', {
+      action: 'mode_changed',
+      from: 'NORMAL',
+      to: 'FOCUS',
+    });
+  });
+
+  it('records returning to NORMAL — otherwise FOCUS time cannot be measured', () => {
+    const d = deps();
+    const am = new AttentionManager(baseConfig(), d);
+    am.setMode('FOCUS');
+    d.record.mockClear();
+
+    am.setMode('NORMAL');
+
+    expect(d.record).toHaveBeenCalledWith('am_decision', {
+      action: 'mode_changed',
+      from: 'FOCUS',
+      to: 'NORMAL',
+    });
+  });
+
+  it('does not record a mode change that changes nothing', () => {
+    const d = deps();
+    const am = new AttentionManager(baseConfig(), d);
+    am.setMode('FOCUS');
+    d.record.mockClear();
+
+    am.setMode('FOCUS');
+
+    expect(d.record).not.toHaveBeenCalled();
   });
 });
