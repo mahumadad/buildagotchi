@@ -138,37 +138,6 @@ seguridad, no la estética.
 
 ---
 
-## D-14 — `dashboard.js` no tiene ni un test
-
-**Dónde**: `bridge/src/server/public/dashboard.js` (~800 líneas), y su CSS.
-
-**El problema**: la suite cubre `src/` y `test/`. El JS del cliente no lo toca
-nadie: no hay jsdom, no hay tests de render, y `tsconfig.test.json` tampoco lo
-typechequea porque no es TypeScript.
-
-**Por qué no explotó**: el emulador es una herramienta de desarrollo, no el
-producto. El producto es el firmware.
-
-**Qué lo haría explotar**: ya lo hizo, el 2026-07-10. Ocultar el contenedor 3D
-para mostrar la página de stats lo colapsó a 0×0; `StackchanScene#resize()` solo
-corre en el evento `resize` de la ventana, así que el canvas WebGL quedó en cero
-píxeles para siempre y la cara desaparecía al volver. **Lo encontró Mario usando
-el dashboard, no la suite** — y yo había dado por buena la vista tras verificar
-únicamente el estado del servidor.
-
-El riesgo de fondo es peor que un canvas roto: mientras el emulador sea la única
-evidencia de que el firmware hará lo correcto, un bug ahí es un bug que se
-descubre en el hardware.
-
-**Fix**: vitest ya trae `environment: 'jsdom'`. Con eso se pueden testear
-`renderScreenView`, `renderLeds` y `formatTokens` sin navegador. Lo que **no** se
-puede testear así es el WebGL — para eso hace falta una aserción sobre el tamaño
-del canvas tras un ciclo de vistas, y eso es Playwright.
-
-**Costo**: ~2 h para jsdom y las funciones puras. Playwright es otra decisión.
-
----
-
 ## Resueltas
 
 Se dejan acá con la fecha para no re-descubrirlas.
@@ -321,3 +290,18 @@ Se dejan acá con la fecha para no re-descubrirlas.
   de vivir en un histograma que muere en cada reinicio. Clampeado a 0 — un salto
   de NTP o un sleep/wake pueden poner el evento en el futuro, y una muestra
   negativa envenena el p95 sin parecer nunca un error. Medido en vivo: 1 ms.
+
+- ~~**`dashboard.js` no tenía ni un test**~~ (era D-14) — resuelto 2026-07-10, el
+  mismo día que se abrió, porque el bug que lo motivó era demasiado barato de
+  cubrir como para dejarlo. El render se extrajo a `screen.mjs` —sin `fetch`, sin
+  timers— y se testea bajo jsdom. Diez tests, entre ellos el que reintroduce el
+  bug: `renderScreenView` **nunca** puede ocultar `.viewport-3d-wrap`.
+
+  Verificado mutando: ocultar el contenedor rompe ese test; no truncar el id de
+  sesión rompe otro. La primera versión de ese segundo test **no mordía**, porque
+  asertaba un prefijo del id, que aparece con y sin truncado. Segunda vez en el
+  día que caigo en lo mismo.
+
+  Lo que sigue sin cubrir es el WebGL: que el canvas conserve su tamaño tras un
+  ciclo de vistas solo lo prueba un navegador de verdad. Eso es Playwright, y es
+  otra decisión. `tsconfig.test.json` ganó `lib: ["ES2023","DOM"]` y `allowJs`.
