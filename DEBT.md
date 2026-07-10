@@ -12,24 +12,39 @@ propio commit.
 
 ---
 
-## D-03 — `pulse`: decisión pendiente para Fase 1B
+## D-03 — `pulse` existe, pero nadie lo ha visto encendido
 
-**Dónde**: `stack-chan/firmware/stackchan/led/led.ts:60-140`.
+**Dónde**: `firmware/mods/led-pulse.ts` (nuestro) y `firmware/mods/breath.ts`.
 
-**El problema**: el firmware expone `on`, `off`, `blink`, `rainbow`. El emulador
-tenía además `pulse`. S2.5.16 lo sacó del enum de zod y de las `stateRules`, y
-D-04 borró su CSS. No queda código muerto; queda una **decisión**.
+**Estado**: la **decisión** de D-03 está tomada (2026-07-10, Mario): `pulse` se
+implementa de verdad en Moddable, no se mapea a un `blink` lento ni se borra.
+El efecto está escrito contra la API real de `NeoStrandEffect`, con la misma
+forma que `Blink`: un setter `effectValue` que recibe el tiempo dentro del ciclo.
+La diferencia es que escala el brillo con un coseno alzado en vez de conmutar
+encendido/apagado.
 
-**Por qué no explotó**: nada lo usa. El enum lo rechaza al cargar config.
+Vive en **nuestro** repo, no en `stack-chan/`: ese directorio es un clon del
+upstream, no lo rastrea nuestro git, y cualquier cosa escrita ahí se pierde en el
+siguiente `pull`. No hizo falta un fork: `Led extends NeoStrand`, y `setScheme` y
+`start` son públicos.
 
-**Qué lo haría explotar**: nada. Está acá para que la decisión de Fase 1B sea
-explícita en vez de improvisada.
+**El problema que queda**: **nunca ha corrido sobre una tira de LEDs**. No hay
+CoreS3. Lo único verificado es la aritmética de la curva (`breath.ts`, 8 tests,
+mutada contra una onda triangular y contra un brillo constante). El resto —que
+`activate` enganche bien con la timeline, que `strand.set` acepte el color, que
+100 ms de intervalo basten para que se vea suave— es fe.
 
-**Fix**: decidir en Fase 1B — ¿implementar `pulse` en Moddable, o mapearlo a un
-`blink` lento en el protocolo BLE? Es la única entrada de este archivo que no es
-un bug.
+**Por qué no explotó**: `pulse` sigue **fuera** del enum `pattern` del bridge, a
+propósito. Nada lo puede pedir.
 
-**Costo**: la decisión, 5 min. La implementación depende de cuál se elija.
+**Qué lo haría explotar**: volver a meter `pulse` en el enum antes de verlo
+encendido. Eso devuelve al emulador a proclamar una capacidad que nadie ha
+observado, que es literalmente el bug que esta entrada registra desde el principio.
+
+**Fix**: Fase 1B, con el hardware en la mesa. Encenderlo, mirarlo, y solo entonces
+añadir `pulse` al enum de zod, al CSS del emulador y a las `stateRules`.
+
+**Costo**: media hora, el día que llegue el robot.
 
 ---
 

@@ -141,6 +141,13 @@ al firmware. Toda la complejidad vive del lado Mac.
   en C++. Moddable tiene la cara más expresiva (8 emociones, blink/breath/saccade, gaze
   XY por ojo, 5 decorators, speech balloon) y es JS end-to-end con el bridge.
 
+- **`pulse`** (2026-07-10): decidido implementarlo de verdad como
+  `NeoStrandEffect` propio, no mapearlo a un `blink` lento. Vive en
+  `firmware/mods/led-pulse.ts` — no en `stack-chan/`, que es un clon del upstream
+  sin rastrear. No requiere fork: `setScheme`/`start` son públicos. **No se ha
+  encendido nunca**; `pulse` sigue fuera del enum del bridge hasta que se vea en
+  un CoreS3. Ver D-03 en `DEBT.md`.
+
 ### D2 — Bridge: Node + TypeScript, diseñado portable, MVP ship Mac
 
 - Familiar para el usuario, MCP SDK oficial en TS, librerías BLE/CDP maduras, ecosistema
