@@ -786,7 +786,18 @@ body {
   padding-bottom: 0.25rem;
 }
 
+/* Absolutely positioned over the scene. See dashboard.js: hiding the wrapper
+   collapsed the WebGL canvas to 0×0 and it never came back. */
+.face-panel {
+  position: relative;
+}
+
 .screen-stats-overlay {
+  position: absolute;
+  top: 2rem;
+  left: 1rem;
+  right: 1rem;
+  z-index: 2;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85rem;
   line-height: 1.6;

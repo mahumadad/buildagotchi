@@ -763,7 +763,6 @@ setInterval(refreshTokens, 5000);
 // there is no permission waiting, because approving comes first.
 const screenBadgeEl = document.getElementById('screen-view-badge');
 const screenStatsEl = document.getElementById('screen-stats-overlay');
-const viewportWrapEl = document.querySelector('.viewport-3d-wrap');
 
 async function renderScreenView(screen) {
   if (!screen || !screenBadgeEl) return;
@@ -771,9 +770,12 @@ async function renderScreenView(screen) {
     screen.pages > 1 ? `${screen.view} ${screen.page + 1}/${screen.pages}` : screen.view;
   screenBadgeEl.textContent = label;
 
+  // The overlay is drawn ON TOP of the scene, never instead of it. Hiding the
+  // wrapper collapsed it to 0×0, and `StackchanScene#resize` only runs on a
+  // window resize — so coming back to the face left a 0-pixel canvas and the
+  // robot vanished for good.
   const showStats = screen.view === 'stats';
   screenStatsEl.hidden = !showStats;
-  if (viewportWrapEl) viewportWrapEl.hidden = showStats;
   if (!showStats) return;
 
   const stats = await fetch('/stats').then((r) => r.json());
