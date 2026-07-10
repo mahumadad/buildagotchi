@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
 import pino from 'pino';
+import { readTailLinesSync } from './tail-reader.js';
 
 const logger = pino({ name: 'claude-transcript' });
 
@@ -14,18 +14,15 @@ export function readTranscriptTail(
   transcriptPath: string,
   maxLines: number,
 ): TranscriptEnrichment | null {
-  let content: string;
-  try {
-    content = readFileSync(transcriptPath, 'utf-8');
-  } catch (err) {
-    logger.warn({ err, transcriptPath }, 'failed to read transcript');
+  // D-02: seek from the end instead of loading the file. Transcripts reach
+  // 70+ MB and this runs inside a hook whose script gives up after 2s.
+  const lines = readTailLinesSync(transcriptPath, maxLines);
+  if (lines === null) {
+    logger.warn({ transcriptPath }, 'failed to read transcript');
     return null;
   }
+  if (lines.length === 0) return null;
 
-  const allLines = content.split('\n').filter((l) => l.length > 0);
-  if (allLines.length === 0) return null;
-
-  const lines = allLines.slice(-maxLines);
   let unknownCount = 0;
   let text: string | undefined;
   let command: string | undefined;
@@ -67,7 +64,9 @@ export function readTranscriptTail(
     }
   }
 
-  const result: TranscriptEnrichment = { unknownLineRatio: unknownCount / lines.length };
+  const result: TranscriptEnrichment = {
+    unknownLineRatio: unknownCount / lines.length,
+  };
   if (text !== undefined) result.text = text;
   if (command !== undefined) result.command = command;
   if (tokens !== undefined) result.tokens = tokens;
