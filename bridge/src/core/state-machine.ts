@@ -3,7 +3,7 @@ import { interpolate, truncate } from '../personality/interpolate.js';
 import type { PersonalityManager } from '../personality/personality.js';
 import type { ActiveAttention } from './attention.js';
 import type { BalloonHistory } from './balloon-history.js';
-import type { Emotion, Event, ResolvedState, Severity } from './events.js';
+import type { Emotion, Event, LedCommand, ResolvedState, Severity } from './events.js';
 
 const logger = pino({ name: 'state-machine' });
 
@@ -72,8 +72,52 @@ function matches(rule: StateRuleMatch, e: Event): boolean {
   return true;
 }
 
+function ledsEqual(a: LedCommand[], b: LedCommand[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((led, i) => {
+    const other = b[i];
+    return (
+      other !== undefined &&
+      led.row === other.row &&
+      led.index === other.index &&
+      led.color === other.color &&
+      led.pattern === other.pattern
+    );
+  });
+}
+
+function servoEqual(a: ResolvedState['servo'], b: ResolvedState['servo']): boolean {
+  return a?.yaw === b?.yaw && a?.pitch === b?.pitch;
+}
+
+/**
+ * Structural comparison, field by field (D-01).
+ *
+ * This was `JSON.stringify(a) === JSON.stringify(b)`, which preserves key
+ * insertion order. `#resolve` builds its object through conditional spreads —
+ * `gaze` lands mid-object when a rule declares it and last when it comes from
+ * `e.direction` — so two semantically identical states could serialize
+ * differently and be recorded as a real transition: a `state_change` line that
+ * lies, a bumped `face_changes_total`, a redundant SSE broadcast, a duplicate
+ * BalloonHistory entry. It never fired because no adapter emits `direction`
+ * yet. Fase 3's Jira and GitHub adapters do.
+ *
+ * Order matters for `decorators` (the renderer draws them in sequence) and for
+ * `leds` (each entry addresses a physical position), so those compare in order.
+ * `balloon` is normalized: the initial state carries `''`, an untouched one may
+ * carry `undefined`, and they mean the same thing to the firmware.
+ */
 function statesEqual(a: ResolvedState, b: ResolvedState): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return (
+    a.emotion === b.emotion &&
+    a.gaze === b.gaze &&
+    a.sound === b.sound &&
+    (a.balloon ?? '') === (b.balloon ?? '') &&
+    a.decorators.length === b.decorators.length &&
+    a.decorators.every((d, i) => d === b.decorators[i]) &&
+    ledsEqual(a.leds, b.leds) &&
+    servoEqual(a.servo, b.servo)
+  );
 }
 
 /**
@@ -218,8 +262,7 @@ export class StateMachine {
       // Bug found in the M13 integration verification 2026-07-09: a permission
       // (transient) approved from chat would leak its balloon onto whatever
       // next event was promoted from the queue.
-      balloon =
-        this.#balloon.policy === 'sticky' ? { ...this.#balloon } : { ...EMPTY_BALLOON };
+      balloon = this.#balloon.policy === 'sticky' ? { ...this.#balloon } : { ...EMPTY_BALLOON };
     } else {
       balloon = {
         text: truncate(interpolate(rawText, ctx), this.#balloonMaxChars),

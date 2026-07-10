@@ -263,10 +263,14 @@ describe('StateMachine — balloon policy (M12a)', () => {
   });
 
   it('#17: emitted ResolvedState always has balloon: string', () => {
-    const rules: StateRule[] = [SILENT_RULE('any')];
+    // The event must produce a state that genuinely differs from the initial
+    // one, or nothing is emitted. This test used to apply a silent rule whose
+    // resolved state was identical to `BACKGROUND_MOOD`, and only "passed"
+    // because `statesEqual` compared with JSON.stringify and the key order
+    // happened to differ — the spurious transition D-01 describes. A different
+    // emotion makes it a real change.
+    const rules: StateRule[] = [{ match: { category: 'any' }, state: { emotion: 'DOUBTFUL' } }];
     const sm = new StateMachine(rules, deps);
-    // Before any event, current() is BACKGROUND_MOOD; the invariant is on
-    // *emitted* states. Trigger one.
     sm.apply(activeOf(ev('any')));
     expect(emitted.length).toBeGreaterThanOrEqual(1);
     for (const s of emitted) {
@@ -323,10 +327,7 @@ describe('StateMachine — balloon policy (M12a)', () => {
     // WITHOUT passing through apply(null) — see attention.ts:210-220. If the
     // inheritance path blindly copies the previous {text, policy}, the
     // transient text leaks onto the next event's silent rule.
-    const sm = new StateMachine(
-      [TRANSIENT_RULE(), SILENT_RULE('subagent_evt')],
-      deps,
-    );
+    const sm = new StateMachine([TRANSIENT_RULE(), SILENT_RULE('subagent_evt')], deps);
     sm.apply(activeOf(ev('transient_evt')));
     expect(sm.current().balloon).toBe('PERM');
     // Straight to the next event — no null in between.
