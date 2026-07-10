@@ -106,6 +106,20 @@ export class AttentionManager {
   push(e: Event): void {
     const now = Date.now();
 
+    // An event may declare that it retires another one (D3: the mechanism is
+    // generic, not Claude-specific — a "CI green" retires a "CI red"). This is
+    // bookkeeping, not attention, so it runs BEFORE the mode filter: otherwise
+    // an ambient resolver arriving in SLEEP would be dropped and its target
+    // would stay active forever. That is exactly the deadlock that shipped:
+    // approving a permission from the chat left `permission_critical` — which
+    // carries an infinite TTL (S2.5.8) and can't be preempted by an ambient
+    // event — as the active event, with the robot showing a warning for an
+    // operation the user had already approved.
+    const resolvesEventId = e.payload.resolvesEventId;
+    if (typeof resolvesEventId === 'string') {
+      this.resolve(resolvesEventId, 'dismissed');
+    }
+
     if (!severityPassesMode(e.severity, this.#mode)) {
       this.#deps.record('am_decision', {
         action: 'rejected',

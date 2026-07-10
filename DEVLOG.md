@@ -185,21 +185,72 @@ exportada del recorder y usada por el server.
 
 ---
 
+### Post-Fase 2.5 — el checklist manual encuentra un deadlock
+
+Al ejecutar el paso 5 del checklist de §8.1 (aprobar desde el chat, no desde el
+dashboard), el robot quedó **colgado permanentemente**: cara DOUBTFUL, LED rojo
+parpadeando y `⚠ sudo rm -rf /` en pantalla, para un permiso ya aprobado.
+
+**Causa**: el hook `PostToolUse` limpiaba `session.pendingPermission` en el
+adapter, pero nunca liberaba el evento en el `AttentionManager`. Como
+`permission_critical` tiene TTL infinito (S2.5.8) y `permission_resolved` es
+`ambient` — incapaz de preemptar un `critical` —, el AM entraba en deadlock. El
+camino del dashboard sí llamaba `attentionManager.resolve()`; el del hook, que
+agregué esta misma mañana, no. El campo `originalEventId` que el adapter emitía
+en el payload **no lo consumía nadie** (`grep -rn originalEventId src/ test/` →
+cero resultados).
+
+Es el mismo bug que el DEVLOG registra como arreglado en Fase 2 para el camino
+del dashboard. Se arregló una puerta y se dejó la otra abierta.
+
+**Por qué 351 tests no lo vieron**: vivía estrictamente *entre* dos módulos.
+`claude-adapter.test.ts` verificaba que `pendingPermission` quedara `undefined`;
+`attention.test.ts` verificaba `resolve()`. Ninguno cruzaba la costura
+`hook → adapter → bus → AM`, porque la separación de módulos — que es correcta —
+hacía que ninguno la poseyera. Un test de integración no es un lujo cuando dos
+módulos correctos producen un sistema incorrecto.
+
+**Fix**: `AttentionManager.push()` honra `payload.resolvesEventId`. El mecanismo
+es genérico (D3: eventos normalizados) — un `build_fixed` de Fase 3 puede retirar
+un `build_failed` sin código nuevo. Corre **antes** del filtro de modo: si no, en
+`SLEEP` un resolver `ambient` se descartaría y su target quedaría activo para
+siempre. Ese caso se verificó a mano contra el bridge.
+
+`originalEventId` → `resolvesEventId`: el nombre viejo describía la procedencia;
+el nuevo describe la intención, que es lo que el AM necesita entender.
+
+Nuevo `test/permission-resolve-chain.test.ts`: 6 tests que instancian el adapter
+y el bus **reales**. Mockear cualquiera de los dos reintroduce el punto ciego.
+
+**357/357 tests verdes.** Verificado end-to-end en Chrome, en `NORMAL` y en
+`SLEEP`.
+
+Hallazgo secundario, no arreglado: un `response` se encola detrás del `prompt`
+de su propia sesión (misma severidad `ambient`, no lo preempta) y el balloon con
+la respuesta de Claude aparece **~30 s tarde**, cuando el `prompt` expira.
+Registrado como D-06 en DEBT.md con el fix propuesto — el mismo
+`resolvesEventId` lo resuelve.
+
+---
+
 ## Pendientes inmediatos
 
-- [ ] Push a GitHub (19 commits ahead de `origin/main`)
-- [ ] Verificación manual pendiente de Fase 2.5 (§8.1 de SPEC-IMPL-FASE-2.5), tres
-      pasos que los tests unitarios no cubren:
-      - Paso 5: aprobar desde el chat de Claude Desktop → `PostToolUse` limpia el
-        balloon end-to-end
-      - Paso 6: bajar `ttlBySeverity.critical` a 5 s y ver un `permission` benigno
-        expirar y limpiarse solo (el fix de C1 en producción, no en unit test)
-      - Paso 11: crítico preempta `response` → al resolver, el response **no**
-        vuelve, pero está en Screen history (decisión de producto, §12)
+- [ ] Push a GitHub (20 commits ahead de `origin/main`)
+- [ ] Verificación manual de Fase 2.5 (§8.1), lo que resta:
+      - ✅ Paso 5: aprobar desde el chat → encontró el deadlock, arreglado
+      - ✅ Paso 11: crítico preempta `response`; al resolver no vuelve, pero está
+        en Screen history (decisión de producto, §12)
+      - [ ] Paso 6: bajar `ttlBySeverity.critical` a 5 s y ver un `permission`
+        benigno expirar y limpiarse solo. **Ojo**: con el `ttlOverride` infinito
+        de S2.5.8 el permiso benigno tampoco expira, así que el paso está mal
+        escrito — hay que quitar el override para ejercitarlo, o reescribirlo
+        contra otra categoría `transient` con TTL finito.
+- [ ] D-06: el lag de 30 s del `response` (DEBT.md)
 - [ ] Fase 0: ejecutar cuando llegue el hardware (NOTES.md tiene el template)
 - [ ] Fase 1B: BLE real con noble + CoreS3
 - [ ] Gate 1: 3 semanas de uso real del MVP (criterios en ROADMAP.md)
 
-Deuda técnica registrada en [DEBT.md](DEBT.md) — cinco entradas, ninguna
-bloqueante. La más peligrosa es D-01 (`statesEqual` con `JSON.stringify`), que
-explota cuando Fase 3 empiece a emitir `direction`.
+Deuda técnica registrada en [DEBT.md](DEBT.md) — seis entradas, ninguna
+bloqueante. Las dos que más importan: D-01 (`statesEqual` con `JSON.stringify`),
+que explota cuando Fase 3 empiece a emitir `direction`; y D-06, que no es
+cosmético — cambia cuándo la cara refleja el estado real.

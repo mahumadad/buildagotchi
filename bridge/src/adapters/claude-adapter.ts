@@ -338,7 +338,13 @@ export class ClaudeAdapter implements Adapter {
       sessionId: session.sessionId,
       cwd: session.cwd,
       action: source,
-      originalEventId: pending.eventId,
+      // Tells the AttentionManager to retire the original permission event
+      // (attention.ts:push). Without this the AM keeps it as active forever:
+      // permission_critical has an infinite TTL and no ambient event can
+      // preempt a critical one. The dashboard's approve path calls
+      // `attentionManager.resolve()` directly (server.ts); the hook path
+      // reaches it through this field.
+      resolvesEventId: pending.eventId,
     });
   }
 

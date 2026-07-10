@@ -133,6 +133,41 @@ tipo de divergencia emulador↔firmware que S2.5.1 existe para evitar.
 
 ---
 
+## D-06 — Un `response` espera ~30 s detrás del `prompt` de su propia sesión
+
+**Dónde**: `bridge/src/core/attention.ts` (`queueCompare`) + `config.yaml`
+(`ttlBySeverity.ambient: 30s`).
+
+**El problema**: `prompt` y `response` son ambos `ambient`. Cuando Claude
+termina de responder, el `Stop` hook emite `response`, pero el `prompt` de esa
+misma sesión sigue siendo el evento activo — misma severidad, así que no lo
+preempta (`severityRank(e) > severityRank(active)` es falso). El `response` se
+encola y solo se promueve cuando el `prompt` expira, **30 segundos después**.
+
+Medido contra el bridge corriendo (2026-07-09): `Stop` a t=0, balloon
+`[miproyecto] tarea terminada` recién a t≈30 s.
+
+**Por qué no explotó**: la pantalla no miente, llega tarde. Y como `response` es
+`sticky` (S2.5.2), una vez que aparece se queda. En uso real el usuario ya leyó
+la respuesta en el chat.
+
+**Qué lo haría explotar**: es un dispositivo *ambient*. Mostrar la respuesta
+medio minuto tarde contradice el propósito — mirás al robot para saber si Claude
+terminó, y te dice que sí treinta segundos después de que terminó. Con varias
+sesiones activas el efecto se compone: cada `prompt` ocupa el activo su TTL
+completo.
+
+**Fix**: el `prompt` de una sesión deja de tener sentido cuando llega su
+`response`. El mecanismo ya existe desde el fix del deadlock: el adapter puede
+emitir el `response` con `payload.resolvesEventId` apuntando al `prompt` de esa
+sesión, y el `AttentionManager` lo retira. Requiere que el adapter recuerde el
+`eventId` del `prompt` por sesión — hoy solo recuerda el del permiso.
+
+**Costo**: ~40 min con test. **No es cosmético**: cambia cuándo la cara refleja
+el estado real, que es la propuesta de valor del producto.
+
+---
+
 ## D-05 — `dashboard.js:671` — `useSingleVarDeclarator`
 
 **Dónde**: [`bridge/src/server/public/dashboard.js:671`](bridge/src/server/public/dashboard.js)
@@ -175,3 +210,27 @@ Se dejan acá con la fecha para no re-descubrirlas.
 - ~~**`POST /replay` usaba UTC para el nombre del día-log**~~ — resuelto en
   Fase 2.5 (M16). El recorder rota por fecha local; `localDateString()` ahora se
   exporta y la comparten.
+- ~~**Aprobar un permiso desde el chat dejaba al robot colgado para siempre**~~ —
+  resuelto 2026-07-09, post-Fase 2.5. El hook `PostToolUse` limpiaba
+  `session.pendingPermission` en el adapter pero nunca liberaba el evento en el
+  `AttentionManager`. Como `permission_critical` tiene TTL infinito (S2.5.8) y
+  `permission_resolved` es `ambient` (no puede preemptar un `critical`), el AM
+  quedaba en deadlock: cara DOUBTFUL, LED rojo y `⚠ sudo rm -rf /` en pantalla,
+  indefinidamente, para un permiso ya aprobado. El camino del dashboard sí
+  llamaba `attentionManager.resolve()` (`server.ts:602`); el del hook no.
+  El campo `originalEventId` que el adapter emitía **no lo leía nadie**.
+
+  Fix: `AttentionManager.push()` honra `payload.resolvesEventId` — mecanismo
+  genérico (D3), no específico de Claude; un "CI green" puede retirar un
+  "CI red". Corre **antes** del filtro de modo, o en `SLEEP` un resolver
+  `ambient` se descartaría y su target quedaría activo para siempre.
+
+  **La lección**: el bug vivía estrictamente *entre* dos módulos con tests
+  verdes. `claude-adapter.test.ts` verificaba que `pendingPermission` quedaba
+  `undefined`; `attention.test.ts` verificaba `resolve()`. Ninguno cruzaba la
+  costura `hook → adapter → bus → AM`, porque la separación de módulos —
+  correcta — hacía que ninguno la "poseyera". Lo encontró el paso 5 del
+  checklist manual de SPEC-IMPL-FASE-2.5 §8.1, no la suite.
+  Cubierto ahora por `test/permission-resolve-chain.test.ts`, que instancia el
+  adapter y el bus reales: mockear cualquiera de los dos reintroduce el punto
+  ciego.
