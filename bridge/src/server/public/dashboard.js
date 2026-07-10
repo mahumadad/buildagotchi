@@ -725,6 +725,10 @@ const tokensTodayEl = document.getElementById('tokens-today');
 const tokensSinceStartEl = document.getElementById('tokens-since-start');
 const tokensContextEl = document.getElementById('tokens-context');
 const tokensBarFillEl = document.getElementById('tokens-bar-fill');
+const lifeApprovalsEl = document.getElementById('life-approvals');
+const lifeDenialsEl = document.getElementById('life-denials');
+const lifeFromheadEl = document.getElementById('life-fromhead');
+const lifeStreakEl = document.getElementById('life-streak');
 
 async function refreshTokens() {
   if (!tokensTodayEl) return;
@@ -745,6 +749,12 @@ async function refreshTokens() {
     const pct = Math.min(100, (ctx / 200_000) * 100);
     tokensContextEl.textContent = formatTokens(ctx);
     tokensBarFillEl.style.width = `${pct}%`;
+    if (lifeApprovalsEl && stats.life) {
+      lifeApprovalsEl.textContent = String(stats.life.approvals);
+      lifeDenialsEl.textContent = String(stats.life.denials);
+      lifeFromheadEl.textContent = `${stats.life.fromHeadPct}%`;
+      lifeStreakEl.textContent = `${stats.life.streak}d`;
+    }
   } catch {
     // A failed poll is not worth a visible error; the next one is 5s away.
   }

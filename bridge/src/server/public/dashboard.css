@@ -776,6 +776,25 @@ body {
   transition: width 0.4s ease;
 }
 
+/* Life panel. Persistent fact-based stats — approvals, from-head%, streak.
+   Shares the same polling cycle as the tokens panel via refreshTokens(). */
+.life-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.2rem 0;
+}
+
+.life-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.life-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+}
+
 /* Screen view (server state, S2.5.1). The firmware will draw these pages itself;
    the emulator shows what it would be drawing so the two never drift unnoticed. */
 .screen-view-badge {
