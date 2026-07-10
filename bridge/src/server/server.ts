@@ -25,6 +25,7 @@ import {
   newEvent,
 } from '../core/events.js';
 import { type Mode, nextMode } from '../core/modes.js';
+import type { ScreenView } from '../core/screen-view.js';
 import type { StateMachine } from '../core/state-machine.js';
 import type { TokenStats } from '../core/token-stats.js';
 import { TOKEN_ACCOUNT, TOKEN_SERVICE } from '../platform/platform.js';
@@ -72,6 +73,7 @@ export interface BridgeServerOptions {
   /** Optional. When present, `GET /balloons` returns its `recent()`. */
   balloonHistory?: BalloonHistory;
   tokenStats?: TokenStats;
+  screenView?: ScreenView;
   publicDir?: string;
 }
 
@@ -263,11 +265,13 @@ export class BridgeServer {
     mode: ReturnType<AttentionManager['snapshot']>['mode'];
     active: ReturnType<AttentionManager['snapshot']>['active'];
     queue: ReturnType<AttentionManager['snapshot']>['queue'];
+    screen: ReturnType<ScreenView['current']> | undefined;
   } {
     const snap = this.#opts.attentionManager.snapshot();
     return {
       resolvedState: this.#opts.stateMachine.current(),
       mode: snap.mode,
+      screen: this.#opts.screenView?.current(),
       active: snap.active,
       queue: snap.queue,
     };
@@ -644,14 +648,14 @@ export class BridgeServer {
       if (button !== 'A' && button !== 'B') return;
       const action = button === 'A' ? 'approve' : 'deny';
       if (this.#resolveFirstPendingPermission(action, 'button')) return;
-      this.#opts.bus.publish(
-        newEvent({
-          source: 'firmware',
-          category: 'button_pressed',
-          severity: 'low',
-          payload: { button },
-        }),
-      );
+      // Nothing to approve, so the buttons navigate — the precedent in
+      // claude-desktop-buddy cycles the view with one button and the page with
+      // another. This replaces a `button_pressed` event that nobody consumed.
+      if (this.#opts.screenView) {
+        if (button === 'A') this.#opts.screenView.nextView();
+        else this.#opts.screenView.nextPage();
+        this.notifyState();
+      }
       return;
     }
 
@@ -755,14 +759,10 @@ export class BridgeServer {
       sendJson(res, 200, { button, action, resolved: true, sessionId: resolved });
       return;
     }
-    const event = newEvent({
-      source: 'firmware',
-      category: 'button_pressed',
-      severity: 'low',
-      payload: { button },
-    });
-    this.#opts.bus.publish(event);
-    sendJson(res, 202, { button, id: event.id });
+    // Same path the firmware takes (`handleDeviceInput`). Two code paths for one
+    // physical button is exactly how the simulator stops being evidence.
+    this.handleDeviceInput('button', { button });
+    sendJson(res, 200, { button, screen: this.#opts.screenView?.current() });
   }
 
   async #handleSimTouch(req: IncomingMessage, res: ServerResponse): Promise<void> {

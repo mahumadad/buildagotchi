@@ -775,3 +775,24 @@ body {
   background: var(--sev-medium);
   transition: width 0.4s ease;
 }
+
+/* Screen view (server state, S2.5.1). The firmware will draw these pages itself;
+   the emulator shows what it would be drawing so the two never drift unnoticed. */
+.screen-view-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-align: right;
+  padding-bottom: 0.25rem;
+}
+
+.screen-stats-overlay {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-bg);
+  white-space: pre;
+}

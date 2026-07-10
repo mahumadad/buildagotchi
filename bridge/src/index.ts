@@ -17,6 +17,7 @@ import { EventBus } from './core/bus.js';
 import { ContextPressureMonitor } from './core/context-pressure.js';
 import { type Adapter, type Event, newEvent } from './core/events.js';
 import { registerShutdown } from './core/lifecycle.js';
+import { ScreenView } from './core/screen-view.js';
 import { StateMachine } from './core/state-machine.js';
 import { TokenStats } from './core/token-stats.js';
 import { loadPreset } from './personality/loader.js';
@@ -132,6 +133,7 @@ async function main(): Promise<void> {
   );
 
   const balloonHistory = new BalloonHistory(config.dashboard.balloonHistorySize);
+  const screenView = new ScreenView();
 
   // `today` survives a restart; `sinceStart` does not, by definition.
   const tokenStats = new TokenStats({ path: join(platform.dataDir(), 'token-stats.json') });
@@ -218,6 +220,7 @@ async function main(): Promise<void> {
     claudeAdapter,
     balloonHistory,
     tokenStats,
+    screenView,
     publicDir: join(import.meta.dirname, 'server', 'public'),
     getHealth: () => ({
       adapters: Object.fromEntries(adapters.map((a) => [a.name, a.health()])),
@@ -259,7 +262,10 @@ async function main(): Promise<void> {
       onLinkChange: (healthy) => {
         logger.warn({ healthy }, healthy ? 'ble link up' : 'ble link dead');
         // D16: a face nobody can update is a face that lies.
-        if (!healthy) stateMachine.forceSafeState();
+        if (!healthy) {
+          stateMachine.forceSafeState();
+          screenView.reset(); // D16: a stats page nobody can update describes nothing
+        }
         server.notifyState();
       },
       metrics,

@@ -157,6 +157,7 @@ function updateButtonStates() {
 
 let lastSound = null;
 function renderState(state) {
+  void renderScreenView(state.screen);
   if (state.resolvedState) {
     const rs = state.resolvedState;
     if (rs.emotion) faceRenderer.setEmotion(rs.emotion);
@@ -754,3 +755,42 @@ async function refreshTokens() {
 
 refreshTokens();
 setInterval(refreshTokens, 5000);
+
+// --- Screen view -----------------------------------------------------------
+// Which page the robot is showing. Server state (S2.5.1): the firmware draws
+// these pages itself, and the emulator shows what it would be drawing so the two
+// cannot drift unnoticed. Button A cycles the view, B the page — but only when
+// there is no permission waiting, because approving comes first.
+const screenBadgeEl = document.getElementById('screen-view-badge');
+const screenStatsEl = document.getElementById('screen-stats-overlay');
+const viewportWrapEl = document.querySelector('.viewport-3d-wrap');
+
+async function renderScreenView(screen) {
+  if (!screen || !screenBadgeEl) return;
+  const label =
+    screen.pages > 1 ? `${screen.view} ${screen.page + 1}/${screen.pages}` : screen.view;
+  screenBadgeEl.textContent = label;
+
+  const showStats = screen.view === 'stats';
+  screenStatsEl.hidden = !showStats;
+  if (viewportWrapEl) viewportWrapEl.hidden = showStats;
+  if (!showStats) return;
+
+  const stats = await fetch('/stats').then((r) => r.json());
+  if (screen.page === 0) {
+    screenStatsEl.textContent = [
+      'TOKENS',
+      `  today       ${formatTokens(stats.output.today)}`,
+      `  since start ${formatTokens(stats.output.sinceStart)}`,
+      `  context     ${stats.context.max === 0 ? '—' : formatTokens(stats.context.max)}`,
+    ].join('\n');
+  } else {
+    const entries = Object.entries(stats.context.bySession);
+    screenStatsEl.textContent = [
+      'SESSIONS',
+      ...(entries.length === 0
+        ? ['  none']
+        : entries.map(([id, ctx]) => `  ${id.slice(0, 12).padEnd(14)}${formatTokens(ctx)}`)),
+    ].join('\n');
+  }
+}
