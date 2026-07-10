@@ -1,0 +1,6 @@
+{
+  "name": "buildagotchi-firmware",
+  "private": true,
+  "type": "module",
+  "description": "Moddable mods for the CoreS3. Not built here; see DEBT D-03."
+}
