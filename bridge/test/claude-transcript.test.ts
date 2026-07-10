@@ -102,3 +102,68 @@ describe('readTranscriptTail', () => {
     expect(result?.command).toBe('rm -rf /tmp/test');
   });
 });
+
+/**
+ * Context occupancy. The precedent (claude-desktop-buddy REFERENCE.md) tracks
+ * only `output_tokens`, cumulative and daily. But `usage` also carries what the
+ * model had to read: `input_tokens` + `cache_read_input_tokens` +
+ * `cache_creation_input_tokens`. Their sum is how full the context window is,
+ * measured on a real 10MB transcript: it climbs monotonically (51k → 157k) and
+ * collapses when the session compacts. That is a signal with a shape, and it is
+ * what a desk companion can reflect without being asked.
+ */
+describe('readTranscriptTail — context occupancy', () => {
+  let dir: string;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeTranscript(lines: string[]): string {
+    dir = mkdtempSync(join(tmpdir(), 'transcript-ctx-'));
+    const p = join(dir, 'transcript.jsonl');
+    writeFileSync(p, lines.join('\n'));
+    return p;
+  }
+
+  function assistantWithUsage(usage: Record<string, unknown>): string {
+    return JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }], usage },
+    });
+  }
+
+  it('sums input + cache_read + cache_creation into contextTokens', () => {
+    const path = writeTranscript([
+      assistantWithUsage({
+        input_tokens: 2,
+        cache_read_input_tokens: 377_728,
+        cache_creation_input_tokens: 623,
+        output_tokens: 345,
+      }),
+    ]);
+    const r = readTranscriptTail(path, 100);
+    expect(r?.contextTokens).toBe(378_353);
+    expect(r?.tokens).toBe(345); // output stays separate: spend, not pressure
+  });
+
+  it('treats missing cache fields as zero rather than dropping the sample', () => {
+    const path = writeTranscript([assistantWithUsage({ input_tokens: 500, output_tokens: 10 })]);
+    expect(readTranscriptTail(path, 100)?.contextTokens).toBe(500);
+  });
+
+  it('reports the LAST assistant message, not the largest', () => {
+    // A compaction resets the window. Taking a max would never show the drop.
+    const path = writeTranscript([
+      assistantWithUsage({ input_tokens: 150_000, output_tokens: 1 }),
+      assistantWithUsage({ input_tokens: 8_000, output_tokens: 1 }),
+    ]);
+    expect(readTranscriptTail(path, 100)?.contextTokens).toBe(8_000);
+  });
+
+  it('leaves contextTokens undefined when there is no usage at all', () => {
+    const path = writeTranscript([
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [] } }),
+    ]);
+    expect(readTranscriptTail(path, 100)?.contextTokens).toBeUndefined();
+  });
+});

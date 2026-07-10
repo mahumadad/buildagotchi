@@ -26,6 +26,7 @@ import {
 } from '../core/events.js';
 import { type Mode, nextMode } from '../core/modes.js';
 import type { StateMachine } from '../core/state-machine.js';
+import type { TokenStats } from '../core/token-stats.js';
 import { TOKEN_ACCOUNT, TOKEN_SERVICE } from '../platform/platform.js';
 import type { Platform } from '../platform/platform.js';
 import { type EventRecorder, localDateString } from '../recorder/recorder.js';
@@ -70,6 +71,7 @@ export interface BridgeServerOptions {
   claudeAdapter?: ClaudeAdapter;
   /** Optional. When present, `GET /balloons` returns its `recent()`. */
   balloonHistory?: BalloonHistory;
+  tokenStats?: TokenStats;
   publicDir?: string;
 }
 
@@ -310,6 +312,7 @@ export class BridgeServer {
     if (method === 'GET' && path === '/stream') return this.#handleStream(res);
     if (method === 'GET' && path === '/metrics') return this.#handleMetrics(res);
     if (method === 'GET' && path === '/balloons') return this.#handleBalloons(res);
+    if (method === 'GET' && path === '/stats') return this.#handleStats(res);
     if (method === 'POST' && path === '/events') return this.#handlePostEvent(req, res);
     if (method === 'POST' && path === '/hooks/claude') return this.#handleHookClaude(req, res);
     if (method === 'POST' && path === '/replay') return this.#handleReplay(req, res);
@@ -389,6 +392,15 @@ export class BridgeServer {
    * M15: last N balloons the face has shown. No auth (localhost, non-destructive
    * — D26). Empty array if the history isn't wired.
    */
+  /** Token spend and context pressure (see core/token-stats.ts). */
+  #handleStats(res: ServerResponse): void {
+    const snapshot = this.#opts.tokenStats?.snapshot() ?? {
+      output: { sinceStart: 0, today: 0 },
+      context: { bySession: {}, max: 0 },
+    };
+    sendJson(res, 200, snapshot);
+  }
+
   #handleBalloons(res: ServerResponse): void {
     const recent = this.#opts.balloonHistory?.recent() ?? [];
     sendJson(res, 200, recent);

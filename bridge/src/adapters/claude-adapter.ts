@@ -237,6 +237,9 @@ export class ClaudeAdapter implements Adapter {
           sessionId,
           cwd: session.cwd,
           ...(enrichment?.tokens !== undefined ? { tokens: enrichment.tokens } : {}),
+          ...(enrichment?.contextTokens !== undefined
+            ? { contextTokens: enrichment.contextTokens }
+            : {}),
           ...(text !== undefined ? { text } : {}),
           ...(answeredPrompt !== undefined ? { resolvesEventId: answeredPrompt } : {}),
         });

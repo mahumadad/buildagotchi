@@ -6,8 +6,22 @@ const logger = pino({ name: 'claude-transcript' });
 export interface TranscriptEnrichment {
   text?: string;
   command?: string;
+  /** Output tokens of the last assistant message. Spend. */
   tokens?: number;
+  /**
+   * How full the context window is: everything the model had to read for the
+   * last assistant message (`input + cache_read + cache_creation`). Pressure,
+   * not spend. It climbs on its own through a session and collapses when the
+   * session compacts — which is why the LAST message is what counts, never the
+   * largest one seen.
+   */
+  contextTokens?: number;
   unknownLineRatio: number;
+}
+
+function num(u: Record<string, unknown>, key: string): number {
+  const v = u[key];
+  return typeof v === 'number' ? v : 0;
 }
 
 export function readTranscriptTail(
@@ -27,6 +41,7 @@ export function readTranscriptTail(
   let text: string | undefined;
   let command: string | undefined;
   let tokens: number | undefined;
+  let contextTokens: number | undefined;
 
   // Real on-disk transcript shape (verified against ccboard + claude-session-dashboard):
   // each line is `{type, message:{content:[...blocks], usage:{...}}}`. Assistant text and
@@ -59,8 +74,16 @@ export function readTranscriptTail(
     }
 
     const usage = msg.usage as Record<string, unknown> | undefined;
-    if (usage && typeof usage.output_tokens === 'number') {
-      tokens = usage.output_tokens;
+    if (usage) {
+      if (typeof usage.output_tokens === 'number') tokens = usage.output_tokens;
+      // Absent cache fields mean zero, not "no sample": a first message with no
+      // cache still occupies its input tokens of context.
+      if (typeof usage.input_tokens === 'number') {
+        contextTokens =
+          usage.input_tokens +
+          num(usage, 'cache_read_input_tokens') +
+          num(usage, 'cache_creation_input_tokens');
+      }
     }
   }
 
@@ -70,5 +93,6 @@ export function readTranscriptTail(
   if (text !== undefined) result.text = text;
   if (command !== undefined) result.command = command;
   if (tokens !== undefined) result.tokens = tokens;
+  if (contextTokens !== undefined) result.contextTokens = contextTokens;
   return result;
 }

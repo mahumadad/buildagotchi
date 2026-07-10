@@ -17,6 +17,7 @@ import { EventBus } from './core/bus.js';
 import type { Adapter, Event } from './core/events.js';
 import { registerShutdown } from './core/lifecycle.js';
 import { StateMachine } from './core/state-machine.js';
+import { TokenStats } from './core/token-stats.js';
 import { loadPreset } from './personality/loader.js';
 import { PersonalityManager } from './personality/personality.js';
 import { MacosPlatform } from './platform/macos.js';
@@ -89,6 +90,14 @@ async function main(): Promise<void> {
           category: e.category,
           severity: e.severity,
         });
+        // Tokens ride on `response` events (claude-adapter). Output is spend and
+        // accumulates; context is pressure and is a level, not a delta.
+        const out = e.payload.tokens;
+        if (typeof out === 'number') tokenStats.addOutput(out);
+        const ctx = e.payload.contextTokens;
+        const sid = e.payload.sessionId;
+        if (typeof ctx === 'number' && typeof sid === 'string') tokenStats.setContext(sid, ctx);
+
         attentionManager.push(e);
         server.notifyEvent(e);
       },
@@ -116,6 +125,9 @@ async function main(): Promise<void> {
   );
 
   const balloonHistory = new BalloonHistory(config.dashboard.balloonHistorySize);
+
+  // `today` survives a restart; `sinceStart` does not, by definition.
+  const tokenStats = new TokenStats({ path: join(platform.dataDir(), 'token-stats.json') });
 
   const stateMachine = new StateMachine(
     config.stateRules,
@@ -167,6 +179,7 @@ async function main(): Promise<void> {
     stateMachine,
     claudeAdapter,
     balloonHistory,
+    tokenStats,
     publicDir: join(import.meta.dirname, 'server', 'public'),
     getHealth: () => ({
       adapters: Object.fromEntries(adapters.map((a) => [a.name, a.health()])),
@@ -229,6 +242,11 @@ async function main(): Promise<void> {
 
   await claudeAdapter.start(bus);
   claudeAdapter.onSessionChangeCallback = (sessions) => {
+    // A session that died leaves no context behind — same invariant the
+    // permission deadlock taught us (DEBT: #retireSession).
+    for (const id of Object.keys(tokenStats.snapshot().context.bySession)) {
+      if (!sessions.has(id)) tokenStats.forgetSession(id);
+    }
     server.notifySession(Object.fromEntries(sessions));
   };
 
