@@ -110,3 +110,35 @@ Se dejan acá con la fecha para no re-descubrirlas.
   resuelto 2026-07-10. Un `prompt` deja de significar algo cuando llega su
   `response`; ahora lo retira con el mismo `resolvesEventId`. De ~30 s a
   inmediato, cronometrado. Un segundo `prompt` también retira al anterior.
+
+- ~~**El hot-reload del config moría tras el primer guardado atómico**~~ (era
+  D-07) — resuelto 2026-07-10. `fs.watch` sobre una ruta de archivo sigue al
+  inodo; un guardado atómico (temp + `rename`, lo que hacen vim, VS Code y
+  `sed -i`) lo dejaba huérfano. El reload se disparaba **una vez** —para el
+  propio rename— y después nada, sin log ni contador de fallos. `loader.ts`
+  vigila ahora el **directorio** y filtra por nombre de archivo; el inodo del
+  directorio sobrevive al rename.
+
+  La suite llevaba meses verde porque `config-loader.test.ts` escribía siempre
+  con `writeFileSync`, in-place, el único camino que funcionaba. El test nuevo
+  hace un `rename` real y exige que un **segundo** cambio posterior también
+  recargue. Verificado además en el bridge en vivo contando
+  `config_reload_duration_ms_count`: 1 → 2 → 3 sobre atómica, in-place y atómica.
+
+  **La lección**: un test que solo ejercita el camino feliz de la API del SO no
+  prueba la integración con el SO. Los dos tests de hot-reload que
+  SPEC-IMPL §8.2 prometía nunca se escribieron, y nadie lo notó.
+
+- ~~**Un `{placeholder}` sin resolver llegaba a la pantalla del robot**~~ (era
+  D-08) — resuelto 2026-07-10. `interpolate()` preserva las claves ausentes a
+  propósito, para que un template roto sea ruidoso. El ruido pertenece al log:
+  el CoreS3 no tiene forma de explicarse. La `StateMachine` ya no renderiza un
+  balloon con placeholders sin resolver — cae a herencia, como una regla
+  silenciosa, y emite `warn`. `interpolate()` queda intacto.
+
+  El detonante real: `{text}` sale de `last_assistant_message` del hook `Stop`,
+  con fallback a leer el transcript, y esa lectura devuelve `null` con
+  `transcriptReadEnabled: false`, una opción soportada. Un test de
+  `personality.test.ts` **asertaba el bug**: esperaba `myapp: {command}` en la
+  pantalla para un permiso sin `command`. Es el tercer test de este repo que
+  documentaba un defecto como si fuera contrato.

@@ -558,7 +558,7 @@ el symlink.)*
 | 8 | En FOCUS, disparar un permiso | pasa (critical), balloon cambia |
 | 9 | `Cycle mode` → SLEEP con un permiso activo | pasa (critical); un `error` de severity `high` no |
 | 10 | `POST /events` × 5 idéntico | una fila `×5` |
-| 11 | Crítico mientras hay balloon de respuesta | preempta; al resolverse **no** vuelve; está en Screen history |
+| 11 | Crítico mientras hay balloon de respuesta | preempta. Al resolverse el crítico, la `response` **sí** vuelve si su TTL no expiró: `attention.ts:149` re-encola el evento preemptado, y un evento todavía vivo merece la pantalla. Lo que no existe es un *stack de balloons* — el balloon sigue al `active`, nunca se apila |
 | 12 | Panel Attention | `active` con `∞`, `queue` con los encolados |
 | 13 | Screen history | los últimos 10, más nuevo arriba |
 | 14 | `Replay today` | los eventos re-corren; el ndjson marca `replay: true` |
@@ -567,7 +567,11 @@ el symlink.)*
 ese balloon quedaba pegado indefinidamente.
 
 **El paso 11** no es una pérdida de información: es un cambio de ubicación (§12 de
-la spec funcional).
+la spec funcional). La redacción original decía que la `response` "no vuelve", y
+es falso: el AM re-encola lo que preempta. Verificado en vivo el 2026-07-10, con
+el AM recién arrancado — un primer intento midió sobre un `error` de `high` que
+seguía activo con 2 min de TTL, y confundió su balloon con el de la `response`.
+Para verificar preemption hay que partir de una cola vacía.
 
 ### 8.2 Tests de integración
 
@@ -579,8 +583,16 @@ la spec funcional).
 | 2 | permission preempta response; al resolverse, limpia |
 | 3 | permission expira por TTL; el balloon se limpia aunque se promueva otro evento |
 | 4 | En FOCUS, un `ambient` no llega al `StateMachine` |
-| 5 | Hot-reload de `config.yaml` cambia `stateRules` sin reiniciar |
-| 6 | Hot-reload que cambia `balloonPolicy` de `sticky` a `transient` surte efecto |
+| 5 | ~~Hot-reload de `config.yaml` cambia `stateRules` sin reiniciar~~ — **nunca se escribió**. El E2E-5 real cubre `BalloonHistory` |
+| 6 | ~~Hot-reload que cambia `balloonPolicy` de `sticky` a `transient` surte efecto~~ — **nunca se escribió**. El E2E-6 real cubre el silencio del preset `mascot` |
+
+**Los dos tests de hot-reload que esta tabla prometía nunca se escribieron**
+(constatado el 2026-07-10). La cobertura real vive en `config-loader.test.ts`, que
+escribía siempre con `writeFileSync` — in-place, mismo inodo — y por eso pasaba
+sobre el único camino que funcionaba, mientras el guardado atómico dejaba el
+watcher huérfano para siempre. Ese era D-07, ya resuelto: el loader vigila el
+directorio, y hay un test que hace un `rename` real y exige que un **segundo**
+cambio posterior también recargue.
 
 ### 8.3 Docs
 
