@@ -6,8 +6,8 @@ export interface ScreenViewState {
   pages: number;
 }
 
-/** Pages per view. The face is the face; stats has tokens and sessions. */
-const PAGES: Record<ViewName, number> = { face: 1, stats: 2 };
+/** Pages per view. The face is the face; stats has tokens, sessions, and life. */
+const PAGES: Record<ViewName, number> = { face: 1, stats: 3 };
 const ORDER: ViewName[] = ['face', 'stats'];
 
 /**

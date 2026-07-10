@@ -13,6 +13,7 @@ const STATS = {
   output: { today: 41_000, sinceStart: 1_055 },
   context: { bySession: { 'sess-abcdef123456': 628_474 }, max: 628_474 },
   sessions: { total: 2, running: 1, waiting: 1 },
+  life: { approvals: 42, denials: 3, fromHeadPct: 71, streak: 7 },
 };
 
 function dom() {
@@ -52,15 +53,15 @@ describe('renderScreenView', () => {
     renderScreenView(els, { view: 'face', page: 0, pages: 1 }, STATS);
     expect(els.badge.textContent).toBe('face');
 
-    renderScreenView(els, { view: 'stats', page: 1, pages: 2 }, STATS);
-    expect(els.badge.textContent).toBe('stats 2/2');
+    renderScreenView(els, { view: 'stats', page: 1, pages: 3 }, STATS);
+    expect(els.badge.textContent).toBe('stats 2/3');
   });
 
   it('hides the overlay on the face and shows it on stats', () => {
     renderScreenView(els, { view: 'face', page: 0, pages: 1 }, STATS);
     expect(els.overlay.hidden).toBe(true);
 
-    renderScreenView(els, { view: 'stats', page: 0, pages: 2 }, STATS);
+    renderScreenView(els, { view: 'stats', page: 0, pages: 3 }, STATS);
     expect(els.overlay.hidden).toBe(false);
   });
 
@@ -68,7 +69,7 @@ describe('renderScreenView', () => {
     // Hiding `.viewport-3d-wrap` collapsed it to 0×0, and StackchanScene#resize
     // only runs on a window resize, so the canvas never came back. The overlay
     // must be drawn OVER the scene, never instead of it.
-    renderScreenView(els, { view: 'stats', page: 0, pages: 2 }, STATS);
+    renderScreenView(els, { view: 'stats', page: 0, pages: 3 }, STATS);
     expect(els.wrap.hidden).toBe(false);
 
     renderScreenView(els, { view: 'face', page: 0, pages: 1 }, STATS);
@@ -76,7 +77,7 @@ describe('renderScreenView', () => {
   });
 
   it('page 0 shows the token counters', () => {
-    renderScreenView(els, { view: 'stats', page: 0, pages: 2 }, STATS);
+    renderScreenView(els, { view: 'stats', page: 0, pages: 3 }, STATS);
     const text = els.overlay.textContent ?? '';
     expect(text).toContain('TOKENS');
     expect(text).toContain('41.0K');
@@ -84,7 +85,7 @@ describe('renderScreenView', () => {
   });
 
   it('page 1 lists sessions with their context', () => {
-    renderScreenView(els, { view: 'stats', page: 1, pages: 2 }, STATS);
+    renderScreenView(els, { view: 'stats', page: 1, pages: 3 }, STATS);
     const text = els.overlay.textContent ?? '';
     expect(text).toContain('SESSIONS');
     expect(text).toContain('1 run / 1 wait'); // counts from the adapter
@@ -95,15 +96,30 @@ describe('renderScreenView', () => {
     expect(text).not.toContain('sess-abcdef123456');
   });
 
+  it('page 2 shows life stats', () => {
+    renderScreenView(els, { view: 'stats', page: 2, pages: 3 }, STATS);
+    const text = els.overlay.textContent ?? '';
+    expect(text).toContain('LIFE');
+    expect(text).toContain('42');   // approvals
+    expect(text).toContain('3');    // denials
+    expect(text).toContain('71%'); // fromHead
+    expect(text).toContain('7');    // streak
+  });
+
+  it('LIFE page never hides the 3D scene', () => {
+    renderScreenView(els, { view: 'stats', page: 2, pages: 3 }, STATS);
+    expect(els.wrap.hidden).toBe(false);
+  });
+
   it('says so when there are no live sessions', () => {
     const empty = { output: { today: 0, sinceStart: 0 }, context: { bySession: {}, max: 0 } };
-    renderScreenView(els, { view: 'stats', page: 1, pages: 2 }, empty);
+    renderScreenView(els, { view: 'stats', page: 1, pages: 3 }, empty);
     expect(els.overlay.textContent).toContain('none');
   });
 
   it('shows an em dash rather than a zero when nothing is in context', () => {
     const empty = { output: { today: 5, sinceStart: 5 }, context: { bySession: {}, max: 0 } };
-    renderScreenView(els, { view: 'stats', page: 0, pages: 2 }, empty);
+    renderScreenView(els, { view: 'stats', page: 0, pages: 3 }, empty);
     expect(els.overlay.textContent).toContain('—');
   });
 

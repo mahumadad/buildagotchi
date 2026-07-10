@@ -35,6 +35,17 @@ function sessionsPage(stats) {
   ].join('\n');
 }
 
+function lifePage(stats) {
+  const life = stats.life ?? { approvals: 0, denials: 0, fromHeadPct: 0, streak: 0 };
+  return [
+    'LIFE',
+    `  approvals   ${life.approvals}`,
+    `  denials     ${life.denials}`,
+    `  from head   ${life.fromHeadPct}%`,
+    `  streak      ${life.streak}d`,
+  ].join('\n');
+}
+
 /**
  * @param {{badge: HTMLElement, overlay: HTMLElement, wrap: HTMLElement}} els
  * @param {{view: string, page: number, pages: number} | undefined} screen
@@ -54,5 +65,6 @@ export function renderScreenView(els, screen, stats) {
   // robot vanished for good. Nothing here may touch `els.wrap.hidden`.
   if (!showStats) return;
 
-  els.overlay.textContent = screen.page === 0 ? tokensPage(stats) : sessionsPage(stats);
+  const pages = [tokensPage, sessionsPage, lifePage];
+  els.overlay.textContent = (pages[screen.page] ?? tokensPage)(stats);
 }

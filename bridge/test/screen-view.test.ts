@@ -34,10 +34,12 @@ describe('ScreenView', () => {
 
   it('pages wrap within the stats view', () => {
     const v = new ScreenView();
-    v.nextView(); // stats: tokens, sessions
-    expect(v.current().pages).toBe(2);
+    v.nextView(); // stats: tokens, sessions, life
+    expect(v.current().pages).toBe(3);
     v.nextPage();
     expect(v.current().page).toBe(1);
+    v.nextPage();
+    expect(v.current().page).toBe(2);
     v.nextPage();
     expect(v.current().page).toBe(0);
   });
