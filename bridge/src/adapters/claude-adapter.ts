@@ -59,6 +59,15 @@ export interface ClaudeSession {
   lastEventAt: number;
   lastPrompt?: string | undefined;
   lastResponse?: string | undefined;
+  /**
+   * Event id of the `prompt` currently in flight for this session, if any.
+   * A prompt stops meaning anything once its `response` arrives, so the
+   * response retires it (D-06). Without this, both being `ambient`, the
+   * response would queue behind its own prompt and only surface when the
+   * prompt expired 30s later — the answer reaching the screen long after
+   * Claude gave it.
+   */
+  pendingPromptEventId?: string | undefined;
   pendingPermission?:
     | {
         eventId: string;
@@ -195,10 +204,15 @@ export class ClaudeAdapter implements Adapter {
           session.lastPrompt = prompt;
           if (!session.title) session.title = prompt.replace(/\s+/g, ' ').trim().slice(0, 80);
         }
-        this.#emit('prompt', 'ambient', {
+        // A new prompt supersedes the previous one; only the latest matters.
+        // Without this, an unanswered prompt lingers in the AM for its full
+        // 30s ambient TTL while a newer one waits behind it.
+        const supersedes = session.pendingPromptEventId;
+        session.pendingPromptEventId = this.#emit('prompt', 'ambient', {
           sessionId,
           cwd: session.cwd,
           ...(prompt !== undefined ? { text: prompt } : {}),
+          ...(supersedes !== undefined ? { resolvesEventId: supersedes } : {}),
         });
         break;
       }
@@ -214,11 +228,17 @@ export class ClaudeAdapter implements Adapter {
             : enrichment?.text;
         session.state = 'idle';
         if (text !== undefined) session.lastResponse = text;
+        // The prompt has been answered; it no longer describes anything. Retire
+        // it (D-06) or the response — also `ambient` — queues behind it and only
+        // reaches the screen when the prompt expires 30s later.
+        const answeredPrompt = session.pendingPromptEventId;
+        session.pendingPromptEventId = undefined;
         this.#emit('response', 'ambient', {
           sessionId,
           cwd: session.cwd,
           ...(enrichment?.tokens !== undefined ? { tokens: enrichment.tokens } : {}),
           ...(text !== undefined ? { text } : {}),
+          ...(answeredPrompt !== undefined ? { resolvesEventId: answeredPrompt } : {}),
         });
         break;
       }
@@ -348,13 +368,16 @@ export class ClaudeAdapter implements Adapter {
     });
   }
 
+  /** Publishes to the bus and returns the event id, so callers can hand it to a
+   *  later event's `payload.resolvesEventId` (see D-06 and the permission flow). */
   #emit(
     category: string,
     severity: 'critical' | 'high' | 'medium' | 'low' | 'ambient',
     payload: Record<string, unknown>,
-  ): void {
+  ): string {
     const event = newEvent({ source: 'claude', category, severity, payload });
     this.#bus?.publish(event);
+    return event.id;
   }
 
   #readTranscript(payload: Record<string, unknown>) {
