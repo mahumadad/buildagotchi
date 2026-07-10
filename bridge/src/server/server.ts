@@ -16,6 +16,7 @@ import type { ClaudeAdapter } from '../adapters/claude-adapter.js';
 import type { AttentionManager, ResolveSource } from '../core/attention.js';
 import type { BalloonHistory } from '../core/balloon-history.js';
 import type { EventBus } from '../core/bus.js';
+import type { LifeStats } from '../core/life-stats.js';
 import {
   type AdapterHealth,
   EMOTIONS,
@@ -73,6 +74,7 @@ export interface BridgeServerOptions {
   /** Optional. When present, `GET /balloons` returns its `recent()`. */
   balloonHistory?: BalloonHistory;
   tokenStats?: TokenStats;
+  lifeStats?: LifeStats;
   screenView?: ScreenView;
   publicDir?: string;
 }
@@ -407,7 +409,13 @@ export class BridgeServer {
       running: 0,
       waiting: 0,
     };
-    sendJson(res, 200, { ...snapshot, sessions });
+    const life = this.#opts.lifeStats?.snapshot() ?? {
+      approvals: 0,
+      denials: 0,
+      fromHeadPct: 0,
+      streak: 0,
+    };
+    sendJson(res, 200, { ...snapshot, sessions, life });
   }
 
   #handleBalloons(res: ServerResponse): void {
@@ -631,6 +639,7 @@ export class BridgeServer {
         mapped === 'approved' ? 'approved' : 'denied',
         'dashboard',
       );
+      this.#opts.lifeStats?.recordResolution(mapped, 'dashboard');
       sendJson(res, 200, { resolved: true });
     } else {
       sendJson(res, 404, { error: 'no pending permission' });
@@ -825,6 +834,7 @@ export class BridgeServer {
         const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, mapped);
         if (eventId) {
           this.#opts.attentionManager.resolve(eventId, mapped, source);
+          this.#opts.lifeStats?.recordResolution(mapped, source);
           return sessionId;
         }
       }

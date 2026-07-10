@@ -139,6 +139,15 @@ stateRules:
       leds: [{ row: right, color: green, pattern: solid }]
       balloon: ""  # compactó: la presión pasó
 
+  # ── Life stats ───────────────────────────────────────────────────────────
+  - match: { source: life, category: life_milestone }
+    state:
+      emotion: HAPPY
+      decorators: [heart]
+      leds: [{ row: left, color: green, pattern: blink }, { row: right, color: green, pattern: blink }]
+      sound: approve
+      balloon: "🎉 {streak} días seguidos"
+
   # ── Ciclo de trabajo de Claude ───────────────────────────────────────────
   # `response` is sticky (S2.5.2): the assistant's answer survives idle, so the
   # user can walk away and come back and still see what was said. Every other
@@ -243,6 +252,7 @@ claude:
   contextWindowTokens: 200000
   contextWarnAt: 0.7                 # DOUBTFUL: the session is filling up
   contextHighAt: 0.9                 # SAD: compaction is imminent
+  milestoneStreakDays: 5              # streak length that triggers a celebration
 
 # MCP server (D26). Exposed as stdio server for Claude Code.
 mcp:

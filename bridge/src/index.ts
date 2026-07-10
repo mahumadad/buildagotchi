@@ -17,6 +17,7 @@ import { EventBus } from './core/bus.js';
 import { ContextPressureMonitor } from './core/context-pressure.js';
 import { type Adapter, type Event, newEvent } from './core/events.js';
 import { registerShutdown } from './core/lifecycle.js';
+import { LifeStats } from './core/life-stats.js';
 import { ScreenView } from './core/screen-view.js';
 import { StateMachine } from './core/state-machine.js';
 import { TokenStats } from './core/token-stats.js';
@@ -106,6 +107,30 @@ async function main(): Promise<void> {
           contextPressure.observe(sid, ctx, typeof e.payload.cwd === 'string' ? e.payload.cwd : '');
         }
 
+        // Life stats: only real Claude events mark activity (not demo, not replay).
+        if (e.source === 'claude') {
+          const result = lifeStats.markActive();
+          if (result.crossedMilestone) {
+            bus.publish(newEvent({
+              source: 'life',
+              category: 'life_milestone',
+              severity: 'ambient',
+              payload: { streak: result.streak },
+            }));
+          }
+        }
+
+        // Life stats: count permission resolutions from the hook path.
+        if (e.source === 'claude' && e.category === 'permission_resolved') {
+          const action = e.payload.action;
+          if (action === 'approved') {
+            lifeStats.recordResolution('approved', 'external');
+          } else if (action === 'denied') {
+            lifeStats.recordResolution('denied', 'external');
+          }
+          // 'external', 'abandoned', 'dismissed' → don't count (C1/C8)
+        }
+
         attentionManager.push(e);
         server.notifyEvent(e);
       },
@@ -137,6 +162,12 @@ async function main(): Promise<void> {
 
   // `today` survives a restart; `sinceStart` does not, by definition.
   const tokenStats = new TokenStats({ path: join(platform.dataDir(), 'token-stats.json') });
+
+  const lifeStats = new LifeStats({
+    path: join(platform.dataDir(), 'life-stats.json'),
+    enabled: !options.demo,
+    milestoneStreak: config.claude.milestoneStreakDays,
+  });
 
   // Context pressure becomes events like any other source (D3): the state rules
   // decide what a full window looks like on the face, not this wiring.
@@ -220,6 +251,7 @@ async function main(): Promise<void> {
     claudeAdapter,
     balloonHistory,
     tokenStats,
+    lifeStats,
     screenView,
     publicDir: join(import.meta.dirname, 'server', 'public'),
     getHealth: () => ({

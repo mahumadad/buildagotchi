@@ -186,6 +186,7 @@ export const ConfigSchema = z.object({
       contextWindowTokens: z.number().default(200_000),
       contextWarnAt: z.number().min(0).max(1).default(0.7),
       contextHighAt: z.number().min(0).max(1).default(0.9),
+      milestoneStreakDays: z.number().int().min(1).default(5),
     })
     .default({}),
   mcp: z
