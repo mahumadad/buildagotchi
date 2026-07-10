@@ -140,10 +140,22 @@ describe('streak', () => {
     expect(r.streak).toBe(1); // unchanged
   });
 
-  it('Saturday to Sunday: streak unchanged', () => {
+  it('first activity on weekend sets streak to 0', () => {
+    const { ls } = makeWithClock('2026-07-11'); // Sat
+    expect(ls.markActive().streak).toBe(0);
+  });
+
+  it('Saturday to Sunday: streak stays 0', () => {
     const { ls, advanceTo } = makeWithClock('2026-07-11'); // Sat
-    ls.markActive(); // streak=1 (first day is sat, workday=false, streak starts at 1 but doesn't increment)
+    ls.markActive(); // streak=0 (weekend, no workday yet)
     advanceTo('2026-07-12'); // Sun
+    expect(ls.markActive().streak).toBe(0);
+  });
+
+  it('first activity on Saturday then Monday: streak is 1 not 2', () => {
+    const { ls, advanceTo } = makeWithClock('2026-07-11'); // Sat
+    ls.markActive(); // streak=0
+    advanceTo('2026-07-13'); // Mon
     expect(ls.markActive().streak).toBe(1);
   });
 

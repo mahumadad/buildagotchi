@@ -77,7 +77,7 @@ export class LifeStats {
     const todayIsWorkday = isWorkday(todayDate);
 
     if (this.#lastActiveDate === '') {
-      this.#streak = 1;
+      this.#streak = todayIsWorkday ? 1 : 0;
       this.#lastActiveDate = today;
       this.#milestoneFired = false;
       this.#save();

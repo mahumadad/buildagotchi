@@ -121,6 +121,7 @@ async function main(): Promise<void> {
         }
 
         // Life stats: count permission resolutions from the hook path.
+        // 'external': the bus event carries no head/button signal.
         if (e.source === 'claude' && e.category === 'permission_resolved' && !e.payload.replayedFrom) {
           const action = e.payload.action;
           if (action === 'approved') {
