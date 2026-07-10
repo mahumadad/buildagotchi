@@ -64,30 +64,34 @@ La (a) parece correcta y barata, y necesita medirse antes de creerle.
 
 ---
 
-## D-10 — la latencia del Gate 1 no sobrevive a un reinicio
+## D-10 — la pata firmware de D23 no se puede medir sin hardware
 
-**Dónde**: `bridge/src/server/metrics.ts` (histogramas en memoria) contra
-`recorder.ts` (el ndjson).
+**Dónde**: `bridge/src/ble/protocol.ts:321-325`.
 
-**El problema**: existen `state_latency_ms` y `reconnect_duration_ms`, pero viven
-en memoria y solo se exponen por `GET /metrics`. Reiniciar el bridge los borra y
-nada llega al ndjson. El Gate 1 pide p95 sobre tres semanas.
+**Corrección**: la versión anterior de esta entrada decía que `state_latency_ms`
+"solo mide hasta el `ResolvedState`". Es falso. Mide `fw_applied_ts - offset -
+bridge_ts`: exactamente la pata del firmware, con corrección de reloj. Lo que no
+existía era la pata del bridge, y ya está — la línea `state_change` lleva
+`latencyMs` desde el 2026-07-10.
 
-Peor: el presupuesto de D23 es "evento crítico → **la cara cambia en el display**,
-e2e bridge→firmware→display", y `state_latency_ms` solo mide hasta el
-`ResolvedState` dentro del proceso. Le falta la pata del firmware.
+**El problema**: `#handleStateApplied` nunca se ejecuta. El transporte es un stub
+que jamás se conecta (`bleHealthy: false` en todo el contexto del recorder), así
+que el histograma existe, está bien escrito, y observa cero muestras. La suma de
+las dos patas —el presupuesto real de D23, "evento crítico → la cara cambia en el
+display"— no se puede calcular hoy.
 
-**Por qué no explotó**: nadie ha medido p95 todavía.
+**Por qué no explotó**: no hay display.
 
-**Qué lo haría explotar**: lo mismo que D-09 — evaluar el Gate 1 y no tener serie
-histórica.
+**Qué lo haría explotar**: llega el CoreS3, se cablea el transporte real, y el
+histograma empieza a llenarse... en memoria, muriendo en cada reinicio. Igual que
+antes, el Gate 1 quiere p95 sobre tres semanas.
 
-**Fix**: dos mitades independientes. (a) Persistir la latencia por evento en la
-línea `state_change` del recorder, que ya se escribe; el p95 se calcula después,
-offline. (b) La pata firmware→display necesita hardware y un ack de la CoreS3;
-va en Fase 1B, junto a D-03.
+**Fix**: cuando Fase 1B conecte el transporte, `#handleStateApplied` debe grabar
+una línea en el recorder además de observar el histograma, y correlacionarla con
+el `state_change` por `eventId` — hoy el envelope no lo lleva. Sumar las dos
+patas se hace offline.
 
-**Costo**: (a) ~1 h. (b) depende de Fase 1B.
+**Costo**: ~1 h, dentro de Fase 1B. No antes: no hay forma de verificarlo.
 
 ---
 
@@ -235,3 +239,11 @@ Se dejan acá con la fecha para no re-descubrirlas.
   lo que dice proteger no prueba nada.
 
   Dejó abierta **D-12**: las apps se roban el foco solas.
+
+- ~~**La latencia del bridge no llegaba al recorder**~~ (era la mitad barata de
+  D-10) — resuelto 2026-07-10. La línea `state_change`, que ya se escribía en
+  cada transición, ahora lleva `latencyMs`: del timestamp del evento al estado
+  resuelto. El p95 se calcula offline sobre toda la ventana de retención, en vez
+  de vivir en un histograma que muere en cada reinicio. Clampeado a 0 — un salto
+  de NTP o un sleep/wake pueden poner el evento en el futuro, y una muestra
+  negativa envenena el p95 sin parecer nunca un error. Medido en vivo: 1 ms.
