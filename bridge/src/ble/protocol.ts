@@ -307,8 +307,12 @@ export class ProtocolSession {
   #sendStatePayload(type: 'state' | 'state_sync', state: ResolvedState): void {
     if (this.#pending) clearTimeout(this.#pending.timer);
     const seq = this.#nextSeq();
-    this.#transmitState(type, state, seq);
+    // Register the pending state BEFORE transmitting. A transport that answers
+    // synchronously delivers the ack from inside `send()`, and `#handleAck`
+    // would find nothing pending to clear — two "missed" acks later, a healthy
+    // link gets declared dead. `#sendHelloAndAwait` already had this ordering.
     this.#pending = { type, state, seq, retried: false, timer: this.#scheduleAckTimeout(seq) };
+    this.#transmitState(type, state, seq);
   }
 
   #transmitState(type: 'state' | 'state_sync', state: ResolvedState, seq: number): void {
@@ -325,13 +329,15 @@ export class ProtocolSession {
 
     if (!this.#pending.retried) {
       const newSeq = this.#nextSeq();
-      this.#transmitState(this.#pending.type, this.#pending.state, newSeq);
+      const { type, state } = this.#pending;
+      // Same ordering as above: the retry can be acked before `send()` returns.
       this.#pending = {
         ...this.#pending,
         seq: newSeq,
         retried: true,
         timer: this.#scheduleAckTimeout(newSeq),
       };
+      this.#transmitState(type, state, newSeq);
       return;
     }
 

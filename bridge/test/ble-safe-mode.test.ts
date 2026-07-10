@@ -151,3 +151,65 @@ describe('ProtocolSession → safe mode (D16)', () => {
     await session.stop();
   });
 });
+
+/**
+ * The bug the wiring exposed. `#sendStatePayload` transmitted the state and only
+ * then registered `#pending`. A transport that answers synchronously — the
+ * SimTransport does, and so could a fast real one — delivers the ack while
+ * `#pending` is still null, `#handleAck` discards it, the retry fires 500ms
+ * later, and the second "missed" ack kills a perfectly healthy link.
+ *
+ * On a live bridge this flapped the link once a second, and every death called
+ * `forceSafeState()`, wiping the face. `protocol.test.ts` never saw it: its
+ * LoopbackTransport answers after 10ms, so `#pending` is always assigned in time.
+ */
+describe('ProtocolSession with a synchronous peer', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  /** Answers ack + state_applied from inside `send()`, like SimTransport. */
+  class SyncTransport implements Transport {
+    #lineCb: ((line: string) => void) | null = null;
+    connect(): Promise<void> {
+      return Promise.resolve();
+    }
+    disconnect(): Promise<void> {
+      return Promise.resolve();
+    }
+    send(line: string): void {
+      const env = JSON.parse(line) as { t: string; seq: number; ts: number };
+      const reply = (t: string, p: unknown) =>
+        this.#lineCb?.(JSON.stringify({ v: 1, seq: 0, t, ts: env.ts, p }));
+      if (env.t === 'hello') reply('hello', { role: 'fw', ts: env.ts });
+      if (env.t === 'state' || env.t === 'state_sync') {
+        reply('ack', { ack_seq: env.seq });
+        reply('state_applied', { ack_seq: env.seq, bridge_ts: env.ts, fw_applied_ts: env.ts });
+      }
+    }
+    onLine(cb: (line: string) => void): void {
+      this.#lineCb = cb;
+    }
+    onStateChange(): void {}
+  }
+
+  it('a synchronously acked state does not kill the link', async () => {
+    const onLinkChange = vi.fn();
+    const session = new ProtocolSession(new SyncTransport(), CFG, {
+      onInboundEvent: vi.fn(),
+      onLinkChange,
+      // biome-ignore lint/suspicious/noExplicitAny: pino Logger shape
+      logger: logger as any,
+      metrics: metrics(),
+    });
+
+    await session.start();
+    await vi.advanceTimersByTimeAsync(0);
+    onLinkChange.mockClear();
+
+    session.sendState({ emotion: 'ANGRY', decorators: [], leds: [], balloon: '' });
+    await vi.advanceTimersByTimeAsync(1_500); // past both ack timeouts
+
+    expect(onLinkChange).not.toHaveBeenCalledWith(false);
+    await session.stop();
+  });
+});
