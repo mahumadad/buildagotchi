@@ -2,6 +2,11 @@ import { join } from 'node:path';
 import pino from 'pino';
 import { ClaudeAdapter } from './adapters/claude-adapter.js';
 import { DemoAdapter } from './adapters/demo.js';
+import {
+  CLAUDE_DESKTOP_BUNDLE_ID,
+  TrustCheckAdapter,
+  readFrontmostBundleId,
+} from './adapters/trust-check.js';
 import { parseArgs } from './cli.js';
 import { ConfigLoader } from './config/loader.js';
 import { AttentionManager } from './core/attention.js';
@@ -182,6 +187,17 @@ async function main(): Promise<void> {
   await server.start();
   logger.info({ host: config.server.host, port: config.server.port }, 'bridge listening');
 
+  // D22. Writes to the recorder, not the bus: it is telemetry about the user,
+  // and an event the robot reacted to would perturb the very state it samples.
+  const trustCheck = new TrustCheckAdapter({
+    watchedBundleId: CLAUDE_DESKTOP_BUNDLE_ID,
+    frontmostBundleId: readFrontmostBundleId,
+    currentEmotion: () => stateMachine.current().emotion,
+    record: (data) =>
+      recorder.record({ line_type: 'event', ts: Date.now(), context: recorderContext(), data }),
+  });
+  trustCheck.start();
+
   await claudeAdapter.start(bus);
   claudeAdapter.onSessionChangeCallback = (sessions) => {
     server.notifySession(Object.fromEntries(sessions));
@@ -197,6 +213,10 @@ async function main(): Promise<void> {
     {
       name: 'attention-manager',
       run: async () => attentionManager.stop(),
+    },
+    {
+      name: 'trust-check',
+      run: async () => trustCheck.stop(),
     },
     {
       name: 'adapters',
