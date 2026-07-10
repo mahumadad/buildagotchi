@@ -233,7 +233,7 @@ describe('StateMachine — latency lands in the recorder (D-10)', () => {
 
   it('a clock that goes backwards does not record a negative latency', () => {
     // NTP steps, sleep/wake. A negative number would poison the p95 silently.
-    let clock = 5_000;
+    const clock = 5_000;
     const d = deps(() => clock);
     const sm = new StateMachine(RULE, d);
 

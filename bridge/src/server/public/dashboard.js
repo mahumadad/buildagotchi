@@ -1,3 +1,5 @@
+import { formatTokens, renderScreenView } from '/screen.mjs';
+
 import { FaceRenderer } from './face-renderer.js';
 import { SoundEngine } from './sound-engine.js';
 import { StackchanScene } from './stackchan-scene.mjs';
@@ -157,7 +159,7 @@ function updateButtonStates() {
 
 let lastSound = null;
 function renderState(state) {
-  void renderScreenView(state.screen);
+  void refreshScreenView(state.screen);
   if (state.resolvedState) {
     const rs = state.resolvedState;
     if (rs.emotion) faceRenderer.setEmotion(rs.emotion);
@@ -722,13 +724,6 @@ const tokensSinceStartEl = document.getElementById('tokens-since-start');
 const tokensContextEl = document.getElementById('tokens-context');
 const tokensBarFillEl = document.getElementById('tokens-bar-fill');
 
-// The precedent's abbreviation, so 184502 fits a 320px screen as `184.5K`.
-function formatTokens(n) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
 async function refreshTokens() {
   if (!tokensTodayEl) return;
   try {
@@ -757,42 +752,19 @@ refreshTokens();
 setInterval(refreshTokens, 5000);
 
 // --- Screen view -----------------------------------------------------------
-// Which page the robot is showing. Server state (S2.5.1): the firmware draws
-// these pages itself, and the emulator shows what it would be drawing so the two
-// cannot drift unnoticed. Button A cycles the view, B the page — but only when
-// there is no permission waiting, because approving comes first.
-const screenBadgeEl = document.getElementById('screen-view-badge');
-const screenStatsEl = document.getElementById('screen-stats-overlay');
+// Which page the robot is showing. Server state (S2.5.1). The rendering lives in
+// screen.mjs so it can be tested under jsdom (D-14); this only fetches.
+const screenEls = {
+  badge: document.getElementById('screen-view-badge'),
+  overlay: document.getElementById('screen-stats-overlay'),
+  wrap: document.querySelector('.viewport-3d-wrap'),
+};
 
-async function renderScreenView(screen) {
-  if (!screen || !screenBadgeEl) return;
-  const label =
-    screen.pages > 1 ? `${screen.view} ${screen.page + 1}/${screen.pages}` : screen.view;
-  screenBadgeEl.textContent = label;
-
-  // The overlay is drawn ON TOP of the scene, never instead of it. Hiding the
-  // wrapper collapsed it to 0×0, and `StackchanScene#resize` only runs on a
-  // window resize — so coming back to the face left a 0-pixel canvas and the
-  // robot vanished for good.
-  const showStats = screen.view === 'stats';
-  screenStatsEl.hidden = !showStats;
-  if (!showStats) return;
-
-  const stats = await fetch('/stats').then((r) => r.json());
-  if (screen.page === 0) {
-    screenStatsEl.textContent = [
-      'TOKENS',
-      `  today       ${formatTokens(stats.output.today)}`,
-      `  since start ${formatTokens(stats.output.sinceStart)}`,
-      `  context     ${stats.context.max === 0 ? '—' : formatTokens(stats.context.max)}`,
-    ].join('\n');
-  } else {
-    const entries = Object.entries(stats.context.bySession);
-    screenStatsEl.textContent = [
-      'SESSIONS',
-      ...(entries.length === 0
-        ? ['  none']
-        : entries.map(([id, ctx]) => `  ${id.slice(0, 12).padEnd(14)}${formatTokens(ctx)}`)),
-    ].join('\n');
-  }
+async function refreshScreenView(screen) {
+  if (!screen || !screenEls.badge) return;
+  const stats =
+    screen.view === 'stats'
+      ? await fetch('/stats').then((r) => r.json())
+      : { output: { today: 0, sinceStart: 0 }, context: { bySession: {}, max: 0 } };
+  renderScreenView(screenEls, screen, stats);
 }

@@ -10,6 +10,10 @@
   "compilerOptions": {
     "noEmit": true,
     "rootDir": ".",
+    // DOM only here: the bridge runs on Node, but the emulator's JS is browser
+    // code and its jsdom tests touch `document` (D-14).
+    "lib": ["ES2023", "DOM"],
+    "allowJs": true,
     "types": ["node", "vitest/globals"]
   },
   "include": ["src", "test"]
