@@ -660,6 +660,17 @@ severity → cola. Esas son políticas del bridge. La personalidad es
 **Consecuencia**: la pregunta "¿qué es buildagotchi?" tiene una respuesta
 del usuario, no del proyecto. El default responde por él si no elige.
 
+### D29 — El balloon del fork de firmware replica el del emulador
+
+El emulador dibuja burbuja redondeada + cola hacia la boca + tema de 2
+colores (Feature A, spec 2026-07-11-adopcion-firmware-original rev 2). La
+cola no existe en el firmware upstream (`stack-chan`: 9-slice sin cola;
+factory: flecha fija). Nuestro fork la implementará con la misma geometría
+(`balloon-layout.mjs` es la referencia). Hasta entonces la divergencia vive
+en DEBT. Del mismo council: el mod MCP del firmware upstream
+(`mods/mcp/mod.js`, `set_emotion`/`say_message` en :8080) queda anotado como
+**opción** de canal de debugging cuando llegue el robot — no compromiso.
+
 ---
 
 ## Mapeo hardware ↔ función (resumen)

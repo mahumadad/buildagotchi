@@ -175,6 +175,25 @@ cálculo en `LifeStats`.
 
 ---
 
+## D-16 — Balloon del emulador diverge del firmware upstream
+
+**Dónde**: `bridge/src/server/public/balloon-layout.mjs` + `face-renderer.js`
+(burbuja con cola) vs `stack-chan/firmware/.../speech-balloon.ts` (9-slice
+sin cola).
+
+**Por qué no explotó**: no hay hardware todavía; el emulador es el único
+display.
+
+**Qué la haría explotar**: flashear el firmware upstream sin portar el
+balloon — el robot mostraría un balloon distinto al que el emulador
+prometió.
+
+**Costo del fix**: implementar el balloon en el fork (geometría ya
+especificada en `balloon-layout.mjs`); estimado 1-2 días de trabajo
+Moddable/Piu cuando llegue el CoreS3 (D29).
+
+---
+
 ## Resueltas
 
 Se dejan acá con la fecha para no re-descubrirlas.
