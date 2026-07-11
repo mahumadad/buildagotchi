@@ -1,6 +1,8 @@
 // Port of stack-chan firmware face renderer to HTML Canvas.
 // Source: stack-chan/firmware/stackchan/renderers/
 
+import { BALLOON, layoutBalloon } from './balloon-layout.mjs';
+
 const INTERVAL = 1000 / 10;
 const DISPLAY_W = 320;
 const DISPLAY_H = 240;
@@ -325,38 +327,35 @@ function createHotSteamDecorator(x, y) {
   };
 }
 
-function createBalloonDecorator(x, y, w, h, text) {
-  let textX = 0;
-  const space = 20;
-  return (ctx, _face, tickMs) => {
-    ctx.save();
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    const r = 6;
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.fill();
+// Feature A: burbuja redondeada + cola hacia la boca, colores del tema.
+// La cola no existe en el firmware upstream — compromiso del fork (DECISIONS).
+function drawBalloon(ctx, layout, theme) {
+  const [pR, pG, pB] = theme.primary;
+  const [sR, sG, sB] = theme.secondary;
+  const { x, y, w, h, lines, tail } = layout;
+  ctx.save();
 
-    ctx.fillStyle = '#000';
-    ctx.font = '14px monospace';
-    const textWidth = ctx.measureText(text).width;
-    ctx.beginPath();
-    ctx.rect(x + 4, y, w - 8, h);
-    ctx.clip();
-    ctx.fillText(text, x + 4 - textX, y + h / 2 + 5);
-    if (textWidth > w - 8) {
-      ctx.fillText(text, x + 4 - textX + textWidth + space, y + h / 2 + 5);
-      textX = textX >= textWidth + space ? 2 : textX + tickMs / 30;
-    }
-    ctx.restore();
-  };
+  ctx.fillStyle = `rgb(${pR},${pG},${pB})`;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, BALLOON.radius);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(tail.baseX1, tail.baseY);
+  ctx.lineTo(tail.tipX, tail.tipY);
+  ctx.lineTo(tail.baseX2, tail.baseY);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = `rgb(${sR},${sG},${sB})`;
+  ctx.font = '12px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const textTop = y + h / 2 - ((lines.length - 1) * BALLOON.lineH) / 2;
+  lines.forEach((line, i) => {
+    ctx.fillText(line, x + w / 2, textTop + i * BALLOON.lineH);
+  });
+  ctx.restore();
 }
 
 // --- Decorator mapping from bridge state ---
@@ -435,10 +434,7 @@ export class FaceRenderer {
 
   setBalloon(text) {
     if (text && text !== this.#balloon?.text) {
-      this.#balloon = {
-        text,
-        render: createBalloonDecorator(10, DISPLAY_H - 40, DISPLAY_W - 20, 30, text),
-      };
+      this.#balloon = { text, layout: layoutBalloon(text) };
     } else if (!text) {
       this.#balloon = null;
     }
@@ -500,7 +496,7 @@ export class FaceRenderer {
 
     // Balloon (outside breath transform)
     if (this.#balloon) {
-      this.#balloon.render(ctx, face, tickMs);
+      drawBalloon(ctx, this.#balloon.layout, face.theme);
     }
   }
 }
