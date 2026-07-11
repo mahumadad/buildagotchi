@@ -3,6 +3,21 @@
 **Fecha**: 2026-07-11
 **Estado**: aprobado (rev 2 — post-council), pendiente de plan de implementación
 
+> **Nota de estado (2026-07-11, post-implementación parcial):** de este spec
+> solo se implementó el **enriquecimiento de permisos con `PreToolUse`**
+> (Tasks 1-3: `summarizeToolUse`, campos `toolName`/`summary` en
+> `pendingPermission`, y su superficie en dashboard/balloon — ver DEVLOG
+> 2026-07-11 "Decisiones interactivas: solo el enriquecimiento (fase 0)").
+> **La Parte 1 (relay real vía hook `PermissionRequest`, con
+> `decision.behavior` para responder de verdad) y la Parte 2
+> (`AskUserQuestion` visible) NO se implementaron.** Motivo: las sesiones de
+> Claude Code corren en `bypassPermissions`, así que el hook
+> `PermissionRequest` que la Parte 1 necesita nunca se dispara en este setup
+> — no hay nada que relayar. Verificar el mecanismo en modo interactivo real
+> (fuera de `bypassPermissions`) es un prerequisito no resuelto antes de
+> construir el relay. Ambas partes quedan como trabajo futuro, sin plan de
+> implementación todavía.
+
 ## Objetivo
 
 Cuando Claude Code pide una decisión al usuario —un permiso de herramienta o

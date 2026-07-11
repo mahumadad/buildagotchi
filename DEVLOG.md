@@ -454,6 +454,88 @@ en la vista stats del robot, y panel Life en el dashboard.
 
 ---
 
+## 2026-07-11 — Decisiones interactivas: solo el enriquecimiento (fase 0)
+
+### Qué se hizo
+
+De la spec de decisiones interactivas (`docs/superpowers/specs/2026-07-11-decisiones-interactivas.md`)
+se implementó **únicamente el enriquecimiento de permisos con `PreToolUse`**:
+la card de permiso y el balloon ahora pueden mostrar qué comando real está
+pidiendo aprobación (`Bash: git push origin main`) en vez de solo "esperando
+permiso". El relay de permisos (hook bloqueante que expone la decisión al
+dashboard) y la Parte 2 (AskUserQuestion visible) **no se implementaron** —
+quedan como trabajo futuro.
+
+**Motivo (fase 0):** las sesiones de Claude Code corren en
+`bypassPermissions`, así que el relay que se había diseñado (interceptar
+`PermissionRequest` y bloquear hasta que el dashboard responda) nunca se
+dispara — no hay eventos que relayar. Y aunque se cambiara el modo, el hook
+`PermissionRequest` no es verificable de forma headless (requiere una sesión
+interactiva real para confirmarlo). Sin poder verificar el mecanismo base,
+construir el relay encima habría sido especulativo. El enriquecimiento vía
+`PreToolUse` sí es 100% verificable con hooks simulados por curl, así que es
+lo único que se construyó esta ronda.
+
+Task 1 y 2 (ya hechas antes de esta sesión, commits `2c7e5d1`, `548116b`,
+`41a75b2`) agregaron `summarizeToolUse` (mapea `tool_name`/`tool_input` a un
+resumen legible) y los campos `toolName`/`summary` en
+`ClaudeAdapter#pendingPermission`. Esta tarea (Task 3) fue solo de
+superficie: mostrar esos campos donde ya existían canales para hacerlo, y
+documentar el alcance real.
+
+### Archivos modificados
+
+- `bridge/src/server/public/dashboard.js` — la card de permiso prefiere
+  `pendingPermission.summary` sobre `.command`, con el mismo fallback a
+  `'(command unavailable)'` de antes.
+
+### Deliberadamente NO tocado (y por qué)
+
+- **`bridge/src/server/server.ts` `#sessionsPayload`**: el brief original
+  pedía copiar `toolName`/`summary` al payload de sesión. Verificado que
+  `#sessionsPayload` (línea 384-391) ya serializa la sesión completa
+  (`out[id] = s`), no una proyección de campos — `pendingPermission` viaja
+  entero, incluidos los campos nuevos de Task 2. No había nada que agregar.
+- **`config.example.yaml` (templates de balloon)**: el brief sugería mover el
+  balloon a `{tool}`. Verificado en `bridge/src/personality/interpolate.ts`
+  que el interpolador **no tiene fallback**: una clave ausente del contexto
+  se deja como literal (`{tool}` a secas) en vez de vaciarse o caer a otra
+  clave — es deliberado (`interpolate.ts:8-11`, para que un bug de template
+  sea visible). Como `permission_prompt` puede llegar sin un `PreToolUse`
+  previo en la misma sesión (p. ej. vía `/sim/permission`, que no manda
+  `tool_input`), cambiar el template a `{tool}` habría hecho que el balloon
+  mostrara literalmente `"{tool}"` en ese caso. Los templates se dejan como
+  `{command}` (que ya se enriquece con el comando real cuando `tool` existe).
+  Mostrar el **nombre de la tool** en el balloon queda pendiente hasta que el
+  interpolador soporte un fallback tipo `{tool|command}`.
+
+### Verificación
+
+- 532 tests verdes (53 archivos), typecheck limpio (`tsc --noEmit`).
+- Cobertura existente a nivel de unidad ya ejercía el flujo completo:
+  `bridge/test/claude-adapter.test.ts` ("enriches a permission with the
+  preceding PreToolUse (Bash)" y "permission without a preceding PreToolUse
+  behaves as before").
+- **E2E en navegador: no concluyente por servidor obsoleto**, no por el
+  código. El bridge corriendo en `localhost:1780` arrancó a las 17:16, antes
+  del commit `548116b` (19:29) que introdujo el enriquecimiento — `tsx` no
+  recarga en caliente, así que el proceso vivo ejecuta el `claude-adapter.ts`
+  de antes de Task 1/2. Repetir el guión de curl del brief (`PreToolUse` con
+  `tool_name: Bash`, `tool_input.command: git push origin main`, luego
+  `Notification permission_prompt`) contra ese proceso deja
+  `pendingPermission` sin `command`/`summary` — consistente con código viejo,
+  no con un bug nuevo. No se reinició el servidor (fuera de alcance de esta
+  tarea). Verificación E2E real queda pendiente del próximo reinicio del
+  bridge.
+
+### Decisiones
+
+- Alcance de esta ronda: **solo enriquecimiento**, no relay, no
+  AskUserQuestion Parte 2. Ambos quedan en la spec como trabajo futuro,
+  bloqueados/diferidos por la razón de fase 0 de arriba.
+
+---
+
 ## Pendientes inmediatos
 
 - [ ] Push a GitHub (20 commits ahead de `origin/main`)

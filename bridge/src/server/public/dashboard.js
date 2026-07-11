@@ -365,9 +365,12 @@ function renderSessions(sessions) {
     if (session.pendingPermission) {
       const perm = document.createElement('div');
       perm.className = 'session-permission';
-      const cmd = session.pendingPermission.command ?? '(command unavailable)';
+      const detail =
+        session.pendingPermission.summary ??
+        session.pendingPermission.command ??
+        '(command unavailable)';
       const marker = session.pendingPermission.isCritical ? '⚠ ' : '';
-      perm.textContent = `${marker}${truncate(cmd, 120)}`;
+      perm.textContent = `${marker}${truncate(detail, 120)}`;
       card.appendChild(perm);
     } else if (session.lastResponse) {
       // Response only — the name already carries the latest prompt.
