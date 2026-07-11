@@ -17,6 +17,7 @@ import type { AttentionManager, ResolveSource } from '../core/attention.js';
 import type { BalloonHistory } from '../core/balloon-history.js';
 import type { EventBus } from '../core/bus.js';
 import type { LifeStats } from '../core/life-stats.js';
+import { focusTerminal } from '../core/focus-terminal.js';
 import {
   type AdapterHealth,
   EMOTIONS,
@@ -640,6 +641,10 @@ export class BridgeServer {
         'dashboard',
       );
       this.#opts.lifeStats?.recordResolution(mapped, 'dashboard');
+      if (action === 'approve') {
+        const session = this.#opts.claudeAdapter.sessions().get(sessionId);
+        if (session?.cwd) focusTerminal(session.cwd, this.#opts.logger);
+      }
       sendJson(res, 200, { resolved: true });
     } else {
       sendJson(res, 404, { error: 'no pending permission' });
@@ -835,6 +840,9 @@ export class BridgeServer {
         if (eventId) {
           this.#opts.attentionManager.resolve(eventId, mapped, source);
           this.#opts.lifeStats?.recordResolution(mapped, source);
+          if (action === 'approve') {
+            focusTerminal(session.cwd, this.#opts.logger);
+          }
           return sessionId;
         }
       }
