@@ -6,7 +6,7 @@ const FILE_TOOLS = new Set(['Edit', 'Write', 'Read', 'NotebookEdit', 'MultiEdit'
 
 function basename(path: string): string {
   const parts = path.split('/').filter(Boolean);
-  return parts.length ? parts[parts.length - 1] : path;
+  return parts.at(-1) ?? path;
 }
 
 function cap(text: string): string {
