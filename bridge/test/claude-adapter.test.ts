@@ -159,6 +159,77 @@ describe('ClaudeAdapter', () => {
     await adapter.stop();
   });
 
+  it('enriches a permission with the preceding PreToolUse (Bash)', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 'S',
+      cwd: '/proj',
+      tool_name: 'Bash',
+      tool_input: { command: 'git push origin main' },
+    });
+    adapter.handleHookEvent({
+      hook_event_name: 'Notification',
+      session_id: 'S',
+      notification_type: 'permission_prompt',
+    });
+
+    const call = (bus.publish as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0])
+      .find((e) => e.category === 'permission' || e.category === 'permission_critical');
+    expect(call?.payload.tool).toBe('Bash: git push origin main');
+    expect(call?.payload.command).toBe('git push origin main');
+    await adapter.stop();
+  });
+
+  it('criticality is judged on the enriched command', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir, ['git push']));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 'S',
+      cwd: '/proj',
+      tool_name: 'Bash',
+      tool_input: { command: 'git push --force' },
+    });
+    adapter.handleHookEvent({
+      hook_event_name: 'Notification',
+      session_id: 'S',
+      notification_type: 'permission_prompt',
+    });
+
+    const call = (bus.publish as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0])
+      .find((e) => e.category === 'permission_critical');
+    expect(call).toBeDefined();
+    await adapter.stop();
+  });
+
+  it('permission without a preceding PreToolUse behaves as before (no tool field)', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent({
+      hook_event_name: 'Notification',
+      session_id: 'S',
+      notification_type: 'permission_prompt',
+      command: 'legacy command',
+    });
+
+    const call = (bus.publish as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0])
+      .find((e) => e.category === 'permission');
+    expect(call?.payload.command).toBe('legacy command');
+    expect(call?.payload.tool).toBeUndefined();
+    await adapter.stop();
+  });
+
   // M13 tests 1-3: category split (S2.5.8). Not just isCritical on the session
   // payload — the bus receives a different `category` so `stateRules` can map
   // each to a distinct expression without special-casing the state machine.

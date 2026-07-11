@@ -10,6 +10,7 @@ import {
 } from './claude-desktop-titles.js';
 import { scanClaudeSessions } from './claude-jsonl-scanner.js';
 import { readTranscriptTail } from './claude-transcript.js';
+import { summarizeToolUse } from './tool-summary.js';
 
 interface MinimalLogger {
   warn(obj: Record<string, unknown>, msg: string): void;
@@ -73,8 +74,13 @@ export interface ClaudeSession {
         eventId: string;
         command?: string;
         isCritical: boolean;
+        toolName?: string;
+        summary?: string;
       }
     | undefined;
+  /** Last PreToolUse seen for this session (tool_name + raw input). Used to
+   *  enrich the next permission prompt; overwritten on every tool call. */
+  lastToolUse?: { toolName: string; toolInput: Record<string, unknown> } | undefined;
 }
 
 export interface ClaudeAdapterConfig {
@@ -253,6 +259,18 @@ export class ClaudeAdapter implements Adapter {
         break;
       }
 
+      case 'PreToolUse': {
+        const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : undefined;
+        const toolInput =
+          payload.tool_input && typeof payload.tool_input === 'object'
+            ? (payload.tool_input as Record<string, unknown>)
+            : undefined;
+        if (toolName) {
+          session.lastToolUse = { toolName, toolInput: toolInput ?? {} };
+        }
+        break;
+      }
+
       case 'SessionEnd':
         this.#retireSession(session);
         break;
@@ -261,14 +279,17 @@ export class ClaudeAdapter implements Adapter {
         if (payload.notification_type === 'permission_prompt') {
           session.state = 'permission_pending';
           const enrichment = this.#readTranscript(payload);
-          // Prefer explicit command from the payload (used by /sim/permission and any
-          // future push-based sources); fall back to transcript enrichment otherwise.
+          const tool = session.lastToolUse
+            ? summarizeToolUse(session.lastToolUse.toolName, session.lastToolUse.toolInput)
+            : undefined;
+          // Priority: explicit payload command (sim/push) → PreToolUse-derived →
+          // transcript scan. The PreToolUse path is the fase-0 enrichment.
           const command =
             typeof payload.command === 'string'
               ? payload.command
               : typeof payload.message === 'string'
                 ? payload.message
-                : enrichment?.command;
+                : (tool?.command ?? enrichment?.command);
           const isCritical = command
             ? this.#deps.criticalCommands.some((c) => command.includes(c))
             : false;
@@ -284,14 +305,20 @@ export class ClaudeAdapter implements Adapter {
               sessionId,
               cwd: session.cwd,
               ...(command !== undefined ? { command } : {}),
+              ...(tool?.summary !== undefined ? { tool: tool.summary } : {}),
               isCritical,
             },
           });
-          const pending: { eventId: string; command?: string; isCritical: boolean } = {
-            eventId: event.id,
-            isCritical,
-          };
+          const pending: {
+            eventId: string;
+            command?: string;
+            isCritical: boolean;
+            toolName?: string;
+            summary?: string;
+          } = { eventId: event.id, isCritical };
           if (command !== undefined) pending.command = command;
+          if (session.lastToolUse) pending.toolName = session.lastToolUse.toolName;
+          if (tool?.summary !== undefined) pending.summary = tool.summary;
           session.pendingPermission = pending;
           this.#bus?.publish(event);
         } else {

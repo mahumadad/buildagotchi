@@ -17,6 +17,9 @@ const HOOK_EVENTS = [
   // PostToolUse fires after Claude Code executes a tool the user just approved —
   // it's how we detect that a pendingPermission was resolved outside the dashboard.
   'PostToolUse',
+  // PreToolUse fires before a tool runs; it carries tool_name + tool_input, used
+  // to enrich the permission event with what tool/command is being asked (fase 0).
+  'PreToolUse',
 ];
 
 export function generateHookScript(bridgeUrl: string): string {
