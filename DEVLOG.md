@@ -536,6 +536,70 @@ documentar el alcance real.
 
 ---
 
+## 2026-07-11 — Feature B: vida percibida (head-pet + idle micro-expresión)
+
+### Qué se hizo
+
+De `docs/superpowers/specs/2026-07-11-adopcion-firmware-original.md` (rev 3),
+dos reacciones nuevas que hacen que el robot se sienta "vivo" sin agregar
+tráfico BLE innecesario:
+
+- **Caricia (`head_pet`)**: el gesto `pet` (device y `/sim/touch`) emite su
+  propia categoría `head_pet` — no reutiliza `tap`/`swipe_*` — porque
+  `stateRules` matchea por categoría, no por payload, y mezclar `pet` con los
+  swipes de cabeza habría hecho que cualquier semántica futura de esos swipes
+  compitiera con la caricia. La regla en `config.example.yaml` resuelve
+  `{ emotion: HAPPY, decorators: [heart], leds: [] }` con un `ttlOverride`
+  (`source: firmware, category: head_pet, ttl: 3s`) para que la reacción se
+  retire sola. `pet` nunca aprueba un permiso — sigue siendo `tap` el único
+  gesto con esa autoridad.
+- **Micro-expresión idle**: un modifier cosmético (`idle-expression.mjs`) que
+  hace un guiño asimétrico de un solo ojo cada pocos segundos, gated por
+  `state.active === null` (la señal idle que el bridge ya manda en
+  `#statePayload`). No es un `ResolvedState` — es puramente client-side,
+  igual que blink/breath/saccade. Ver D30: emitirla server-side habría sido
+  el mismo anti-patrón de firehose BLE que el council marcó para el
+  face-mimic (C5).
+
+### Archivos modificados
+
+- `bridge/src/server/server.ts` — categoría `head_pet` en
+  `handleDeviceInput` y `#handleSimTouch`.
+- `config.example.yaml` — stateRule + `ttlOverride` para `head_pet`.
+- `bridge/src/server/public/idle-expression.mjs` — modifier puro
+  `(tickMs, face) => face`, con rng inyectado para tests determinísticos.
+- `bridge/src/server/public/face-renderer.js` — `#idle`, `setIdle()`, el
+  modifier agregado al array de modifiers.
+- `bridge/src/server/public/dashboard.js` —
+  `faceRenderer.setIdle(state.active == null)` en `renderState`.
+- Tests: `bridge/test/server-touch.test.ts`, `bridge/test/attention.test.ts`,
+  `bridge/test/integration-fase2.test.ts`, `bridge/test/idle-expression.test.ts`.
+
+### Verificación
+
+- Suite completa verde (tests nuevos de touch, attention, integración e
+  idle-expression incluidos).
+- Verificación en vivo del gating: con un evento real de alta prioridad
+  activo (`context_high`), la caricia de baja severidad queda encolada
+  detrás — el Attention Manager prioriza correctamente. Observación de
+  producto (no bug): mientras hay trabajo urgente activo, una caricia física
+  no da feedback inmediato — queda anotado, no es un defecto de esta tarea.
+
+### Decisiones
+
+- **`head_pet` como categoría propia** (no reutilizar `tap`/`swipe_*`):
+  `stateRules` matchea por categoría, no por payload — ver Task 1, commit
+  `93870e1`.
+- **Idle híbrido, rev 3 del spec** (D30): el servidor sólo expone la señal
+  de idle; la micro-expresión la corre el cliente/firmware como cosmético.
+  Evita el firehose BLE que tendría emitirla como `ResolvedState`.
+- **Deuda abierta** (D-17): ni el gesto `pet` ni la micro-expresión idle
+  están validados contra el touch panel real del CoreS3 — Fase 0 lo resuelve.
+
+**Commits**: `93870e1`..`766ca9f` (3 commits: gesture, idle module, wiring).
+
+---
+
 ## Pendientes inmediatos
 
 - [ ] Push a GitHub (20 commits ahead de `origin/main`)

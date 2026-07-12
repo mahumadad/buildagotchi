@@ -673,6 +673,27 @@ en DEBT. Del mismo council: el mod MCP del firmware upstream
 
 ---
 
+### D30 — La micro-expresión idle es cosmética client-side, gated por una señal idle server-authoritative
+
+**Contexto**: el spec de Feature B (rev 2) pedía la micro-expresión idle
+server-side por S2.5.1. Pero es cosmética (no comunica un evento), igual que
+blink/breath/saccade, que ya corren client-side y device-side en el firmware.
+Emitirla como `ResolvedState` empujaría un firehose BLE cada 2–6 s para algo
+que el firmware genera solo (mismo anti-patrón que el council marcó para el
+face-mimic, C5).
+
+**Decisión**: el servidor sólo expone la señal autoritativa de idle
+(`state.active === null`, ya presente en `#statePayload`). El cliente/firmware
+corre la micro-expresión como modifier cosmético gated por esa señal. El
+servidor manda el *cuándo*; el device el *cómo*. Respeta S2.5.1 (la autoridad
+de "estoy idle" sigue en el server) sin tráfico BLE extra.
+
+**Consecuencia**: la micro-expresión NO aparece en el event-log ni en el
+`ResolvedState`. En el robot real será un modifier del firmware, activado por
+el mismo flag idle que el bridge ya envía.
+
+---
+
 ## Mapeo hardware ↔ función (resumen)
 
 Detalle por fase en ROADMAP. Convención base:

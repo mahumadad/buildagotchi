@@ -1,7 +1,8 @@
 # Adopción del firmware original — balloon, mimic y vida percibida
 
 **Fecha**: 2026-07-11
-**Estado**: aprobado (rev 2 — post-council), pendiente de plan de implementación
+**Estado**: aprobado (rev 3 — Feature B idle híbrido + gesto `pet`), Feature A
+implementada; Feature B en plan de implementación
 **Fuentes**: auditoría de `stack-chan/` (Moddable, nuestro target de firmware) y
 `StackChan/` + `StackChan-BSP/` (factory firmware de M5Stack), 2026-07-11.
 
@@ -113,15 +114,28 @@ El emulador ya tiene blink, breath y saccade (`face-renderer.js:405-409`,
 mismos parámetros que el firmware). Se adoptan del factory los que faltan y
 tienen equivalente en nuestro stack:
 
-1. **IdleExpressionModifier**: micro-expresión aleatoria cada 2–6 s cuando no
-   hay evento activo (una ceja de duda, un ojo entrecerrado). Server-side —
-   es política de display, vive en el bridge (S2.5.1), no en el cliente.
-2. **HeadPetModifier**: reacción a caricia (swipe en la cabeza ≠ tap). Hoy el
-   tap aprueba permisos; el swipe no existe en nuestro protocolo. Se agrega
-   `gesture: 'swipe'` al evento `touch_head` y una reacción HAPPY + decorator
-   heart con TTL corto. El firmware factory ya distingue el gesto; el
-   Moddable expone el touch panel — verificar en Fase 0 qué gestos reporta el
-   hardware real.
+1. **IdleExpressionModifier** (híbrido server-marca / device-anima, rev 3):
+   micro-expresión aleatoria cada 2–6 s cuando no hay evento activo (una ceja
+   de duda, un ojo entrecerrado). La micro-expresión es **cosmética** — no
+   comunica un evento, es "vida", igual que blink/breath/saccade, que ya
+   corren client-side (`face-renderer.js:404`) y device-side en el firmware
+   factory (autónomos, no empujados por un server). Emitirla como
+   `ResolvedState` server-authoritative crearía un firehose BLE cada 2–6 s
+   para algo que el firmware genera solo — el mismo anti-patrón que el council
+   marcó para el face-mimic (C5). **Decisión**: el servidor sólo expone un
+   flag `idle` autoritativo (sabe si el AM tiene evento activo: `active ===
+   null` → `backgroundMood`); el cliente/firmware corre la micro-expresión
+   como modifier cosmético **gated por ese flag**. El servidor manda el
+   *cuándo* (idle sí/no), el device el *cómo* (la animación). Respeta S2.5.1
+   —la autoridad de "estoy idle" sigue en el server— sin tráfico BLE extra.
+2. **HeadPetModifier**: reacción a caricia. Hoy el tap aprueba permisos y el
+   hold duerme; `swipe_fwd`/`swipe_back` quedan **reservados para navegar la
+   cola de notifs en Fase 3** (ROADMAP §Fase 3). Para la caricia se agrega un
+   gesto dedicado `gesture: 'pet'` al evento `touch_head`, con reacción HAPPY
+   + decorator heart y TTL corto vía `stateRules`. **No aprueba ningún
+   permiso** (sólo `tap` lo hace). El firmware factory ya distingue la
+   caricia; el Moddable expone el touch panel — verificar en Fase 0 qué gestos
+   reporta el hardware real (queda en DEBT como capacidad no validada, C7).
 3. **SpeakingModifier** (boca sincronizada a audio): **diferido a Fase 5
    (voz)**. Sin TTS no hay nada que sincronizar.
 
@@ -181,12 +195,16 @@ Dos hallazgos que fijan decisiones futuras, sin código hoy:
    texto con palabra más larga que el ancho).
 3. DECISIONS ancla el compromiso del balloon en firmware y la opción MCP;
    DEBT registra la divergencia emulador-firmware del balloon con su costo.
-4. Una micro-expresión idle ocurre en ausencia de eventos y **nunca** pisa un
-   balloon/emoción activos del AM (es la prioridad más baja).
-5. `touch_head` con `gesture: 'swipe'` produce reacción HAPPY + heart con TTL
-   ≤ 5 s y no aprueba ningún permiso. **El swipe es emulador-only hasta que
-   Fase 0 confirme qué gestos reporta el touch real del CoreS3** (C7,
-   council) — se registra en DEBT como capacidad no validada en hardware.
+4. El servidor expone un flag `idle` autoritativo (true sólo cuando el AM no
+   tiene evento activo). El cliente corre la micro-expresión **sólo** cuando
+   `idle === true`; en cuanto llega un evento (balloon/emoción del AM) la
+   suprime. La micro-expresión **nunca** altera el `ResolvedState` ni viaja
+   por el bus/BLE — es un modifier cosmético como blink/breath.
+5. `touch_head` con `gesture: 'pet'` produce reacción HAPPY + heart con TTL
+   ≤ 5 s y **no aprueba ningún permiso** (sólo `tap` lo hace). `swipe_fwd`/
+   `swipe_back` quedan libres para Fase 3. **El gesto `pet` es emulador-only
+   hasta que Fase 0 confirme qué gestos reporta el touch real del CoreS3**
+   (C7, council) — se registra en DEBT como capacidad no validada en hardware.
 6. El gate del mimic tiene un resultado escrito (fps, CPU y decisión de
    transporte con números) antes de que exista cualquier plan de
    implementación de la Feature C.

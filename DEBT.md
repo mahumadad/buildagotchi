@@ -194,6 +194,28 @@ Moddable/Piu cuando llegue el CoreS3 (D29).
 
 ---
 
+## D-17 — `pet` gesture y micro-expresión idle no validados en hardware (C7)
+
+**Dónde**: `server.ts` (`head_pet` desde `gesture: 'pet'`), `idle-expression.mjs`.
+
+**Qué**: el gesto `pet` y la micro-expresión idle se ejercen sólo contra el
+emulador. El firmware factory distingue una caricia y corre un IdleExpression
+device-side, pero **no está confirmado** qué gestos reporta el touch real del
+CoreS3 ni cómo se mapea la caricia.
+
+**Por qué no explota hoy**: sin hardware, el emulador es la única superficie;
+el gesto se dispara desde `/sim/touch`.
+
+**Qué lo haría explotar**: al integrar el touch real (Fase 0), si el hardware
+no distingue una caricia de un swipe, `head_pet` nunca se emitiría desde el
+robot y la reacción quedaría emulador-only de forma permanente.
+
+**Costo del fix**: verificar en Fase 0 los gestos del touch panel y, si hace
+falta, derivar `pet` de un patrón temporal (varios toques suaves) en el
+firmware. Bajo, pero bloqueado por hardware.
+
+---
+
 ## Resueltas
 
 Se dejan acá con la fecha para no re-descubrirlas.
