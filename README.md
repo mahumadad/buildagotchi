@@ -15,9 +15,9 @@ notifications and drive the hardware.
 >
 > | | |
 > |---|---|
-> | **Done** | Phase 1A (bridge foundation), Phase 2 (Claude Code MVP), Phase 2.5 (server-authoritative display + observability), Life Stats |
+> | **Done** | Phase 1A (bridge foundation), Phase 2 (Claude Code MVP), Phase 2.5 (server-authoritative display + observability), Life Stats, aesthetic speech balloon, enriched permission prompts, terminal focus on approve |
 > | **Runs today** | `npm run dev` in `bridge/` → web emulator at `localhost:1780` with 3D robot, live sessions, dashboard, and event replay |
-> | **505 tests** | `npm test` in `bridge/`. Green. |
+> | **533 tests** | `npm test` in `bridge/`. Green. |
 > | **Not built** | BLE transport (stub), Metabolic State (Phase 4), voice (Phase 5), Chrome/Jira/GitHub/Calendar adapters (Phases 3, 6) |
 >
 > [ROADMAP.md](ROADMAP.md) has the phased plan and the validation gates.
@@ -80,9 +80,14 @@ browser is what the robot will do when it arrives.
 The emulator dashboard shows:
 
 - **3D robot viewport** — the face, emotions, decorators, and servo pan/tilt,
-  rendered with Three.js in the same 320x240 frame the firmware draws.
+  rendered with Three.js in the same 320x240 frame the firmware draws. The
+  speech balloon is a rounded bubble with a tail that rises to the mouth and
+  colors that follow the face theme, mirroring the StackChan firmware.
 - **Claude sessions panel** — every active Claude Code session on your machine,
   with status, context usage, last message, and permission simulation buttons.
+  A pending permission shows what triggered it (e.g. `Bash: git push origin
+  main`), captured from the `PreToolUse` hook; approving it from the dashboard
+  brings your terminal back to the front.
 - **Simulation controls** — cycle modes (NORMAL/FOCUS/SLEEP), fake permission
   prompts, trigger emotions, replay past event logs.
 - **Stats pages** — token usage, session counts, and **life stats** (approvals,
@@ -176,6 +181,8 @@ still exists in the [ROADMAP](ROADMAP.md) instead of being quietly skipped.
 | [SPEC-FASE-2.5.md](SPEC-FASE-2.5.md) | Spec for Phase 2.5 (server-authoritative balloon + observability). Explains why the dashboard can't own display policy. |
 | [SPEC-IMPL-FASE-2.5.md](SPEC-IMPL-FASE-2.5.md) | Executable plan for Phase 2.5 (M12a–M17), post-council revision 2. |
 | [docs/superpowers/specs/2026-07-10-life-stats-design.md](docs/superpowers/specs/2026-07-10-life-stats-design.md) | Life stats spec — three fact-based metrics (approvals, fromHead%, streak), council-reviewed. |
+| [docs/superpowers/specs/2026-07-11-decisiones-interactivas.md](docs/superpowers/specs/2026-07-11-decisiones-interactivas.md) | Interactive decisions spec — permission enrichment (shipped) and the AskUserQuestion relay (deferred), with the fase-0 reasoning. |
+| [docs/superpowers/specs/2026-07-11-adopcion-firmware-original.md](docs/superpowers/specs/2026-07-11-adopcion-firmware-original.md) | Firmware adoption spec — aesthetic balloon, perceived-life modifiers, and bridge-side face-mimic, drawn from the StackChan firmware audit. |
 | [SETUP.md](SETUP.md) | Toolchain setup for ModdableSDK + ESP-IDF on macOS. |
 | [NOTES.md](NOTES.md) | Template for recording Phase 0 discovery evidence. |
 | [config.example.yaml](config.example.yaml) | Annotated template of the bridge configuration (mode, Attention Manager, dedup, stateRules, BLE, external surface). Copy to `config.yaml` (gitignored) to use. |
