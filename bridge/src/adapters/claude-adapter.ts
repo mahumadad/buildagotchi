@@ -78,9 +78,11 @@ export interface ClaudeSession {
         summary?: string;
       }
     | undefined;
-  /** Last PreToolUse seen for this session (tool_name + raw input). Used to
-   *  enrich the next permission prompt; overwritten on every tool call. */
-  lastToolUse?: { toolName: string; toolInput: Record<string, unknown> } | undefined;
+  /** Summary of the last PreToolUse seen for this session, used to enrich the
+   *  next permission prompt; overwritten on every tool call. Only the derived
+   *  summary/command are kept — the raw tool_input (which the whole session is
+   *  serialized to the dashboard SSE) must not carry file contents or secrets. */
+  lastToolUse?: { toolName: string; command?: string; summary: string } | undefined;
 }
 
 export interface ClaudeAdapterConfig {
@@ -266,7 +268,10 @@ export class ClaudeAdapter implements Adapter {
             ? (payload.tool_input as Record<string, unknown>)
             : undefined;
         if (toolName) {
-          session.lastToolUse = { toolName, toolInput: toolInput ?? {} };
+          // Summarize now and discard the raw input — it must not linger on the
+          // session, which is serialized wholesale to the dashboard SSE.
+          const { command, summary } = summarizeToolUse(toolName, toolInput ?? {});
+          session.lastToolUse = { toolName, summary, ...(command !== undefined ? { command } : {}) };
         }
         break;
       }
@@ -279,9 +284,7 @@ export class ClaudeAdapter implements Adapter {
         if (payload.notification_type === 'permission_prompt') {
           session.state = 'permission_pending';
           const enrichment = this.#readTranscript(payload);
-          const tool = session.lastToolUse
-            ? summarizeToolUse(session.lastToolUse.toolName, session.lastToolUse.toolInput)
-            : undefined;
+          const tool = session.lastToolUse;
           // Priority: explicit payload command (sim/push) → PreToolUse-derived →
           // transcript scan. The PreToolUse path is the fase-0 enrichment.
           const command =

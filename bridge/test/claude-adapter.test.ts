@@ -185,6 +185,26 @@ describe('ClaudeAdapter', () => {
     await adapter.stop();
   });
 
+  it('does not retain the raw tool_input on the session (it is serialized to the dashboard)', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent({
+      hook_event_name: 'PreToolUse',
+      session_id: 'S',
+      cwd: '/proj',
+      tool_name: 'Write',
+      tool_input: { file_path: '/proj/.env', content: 'SECRET_KEY=hunter2' },
+    });
+
+    const stored = JSON.stringify(adapter.sessions().get('S'));
+    expect(stored).not.toContain('hunter2');
+    expect(stored).not.toContain('SECRET_KEY');
+    expect(adapter.sessions().get('S')?.lastToolUse?.summary).toBe('Write: .env');
+    await adapter.stop();
+  });
+
   it('criticality is judged on the enriched command', async () => {
     const bus = makeBus();
     const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir, ['git push']));
