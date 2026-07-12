@@ -59,16 +59,20 @@ describe('layoutBalloon', () => {
     expect(l.lines.length).toBe(2);
   });
 
-  it('bubble and tail never invade the eye band (y <= 76)', () => {
+  it('bubble hangs below the mouth, clear of the eye band, inside the screen', () => {
     const worst = layoutBalloon('a'.repeat(500));
-    expect(worst.y + worst.h).toBeLessThanOrEqual(64);
-    expect(worst.tail.tipY).toBeLessThanOrEqual(76);
+    // top edge sits below the mouth (148); eyes/eyelids live at y≈81–108
+    expect(worst.y).toBeGreaterThan(BALLOON.mouth.y);
+    // even the tallest bubble stays on screen
+    expect(worst.y + worst.h).toBeLessThanOrEqual(BALLOON.displayH);
   });
 
-  it('tail points toward the mouth and stays under the bubble', () => {
+  it('tail rises from the top of the bubble to the mouth', () => {
     const l = layoutBalloon('ok');
-    expect(l.tail.baseY).toBe(l.y + l.h - 1);
-    expect(l.tail.tipY).toBeGreaterThan(l.tail.baseY);
+    // base on the bubble's top edge, tip at the mouth (above the base)
+    expect(l.tail.baseY).toBe(l.y);
+    expect(l.tail.tipY).toBe(BALLOON.mouth.y);
+    expect(l.tail.tipY).toBeLessThan(l.tail.baseY);
     // base centrada respecto a la boca (160), clampeada dentro de la burbuja
     expect(l.tail.baseX1).toBeGreaterThanOrEqual(l.x + BALLOON.radius);
     expect(l.tail.baseX2).toBeLessThanOrEqual(l.x + l.w - BALLOON.radius);
