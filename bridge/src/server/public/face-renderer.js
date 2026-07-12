@@ -2,6 +2,7 @@
 // Source: stack-chan/firmware/stackchan/renderers/
 
 import { BALLOON, layoutBalloon } from './balloon-layout.mjs';
+import { createIdleExpressionModifier } from './idle-expression.mjs';
 
 const INTERVAL = 1000 / 10;
 const DISPLAY_W = 320;
@@ -394,6 +395,7 @@ export class FaceRenderer {
   #animId = null;
   #lastTime = 0;
   #tickCount = 0;
+  #idle = false;
 
   constructor(canvas) {
     this.#canvas = canvas;
@@ -405,6 +407,7 @@ export class FaceRenderer {
       createBlinkModifier({ openMin: 400, openMax: 5000, closeMin: 200, closeMax: 400 }),
       createBreathModifier({ duration: 6000 }),
       createSaccadeModifier({ updateMin: 300, updateMax: 2000, gain: 0.2 }),
+      createIdleExpressionModifier({ isIdle: () => this.#idle }),
     ];
   }
 
@@ -442,6 +445,10 @@ export class FaceRenderer {
 
   setMouthOpen(value) {
     this.#mouthOpen = value;
+  }
+
+  setIdle(idle) {
+    this.#idle = idle;
   }
 
   #render(tickMs) {

@@ -183,6 +183,9 @@ function renderState(state) {
       refreshBalloonHistory();
     }
   }
+  // Feature B: the micro-expression runs only while the AM has no active
+  // event. `state.active === null` is the server's authoritative idle signal.
+  faceRenderer.setIdle(state.active == null);
   if (state.mode) {
     stateModeEl.textContent = state.mode;
     currentMode = state.mode;
