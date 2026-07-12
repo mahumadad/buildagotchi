@@ -216,6 +216,32 @@ firmware. Bajo, pero bloqueado por hardware.
 
 ---
 
+## D-18 — La caricia se pierde (no se difiere) cuando hay un evento más urgente
+
+**Dónde**: `attention.ts` (`#computeDeadline` al `push`, expiración de cola en `tick`),
+regla `head_pet` con `ttlOverride: 3s`.
+
+**Qué**: `head_pet` tiene severity `low`. Si llega mientras hay un evento de
+mayor prioridad activo (p. ej. `context_high`), queda en la cola; su deadline
+se computa al encolarse, así que a los 3s se descarta **sin haberse mostrado
+nunca**. Verificado en vivo el 2026-07-11: con una sesión real al 100 % de
+contexto, una caricia no produjo ningún feedback visible.
+
+**Por qué no explota hoy**: es el comportamiento correcto del AM (no quieres un
+corazón obsoleto apareciendo 30 s tarde), y el criterio del spec sólo exige
+TTL ≤ 5 s y que no apruebe permisos — ambos se cumplen.
+
+**Qué lo haría explotar**: si el uso muestra que la falta de feedback a una
+interacción física se siente rota (tocas al robot y no reacciona porque está
+"ocupado"), habría que darle a la caricia una prioridad momentánea o un canal
+de reacción propio fuera de la cola de atención.
+
+**Costo del fix**: medio. Requiere decidir si una interacción física del
+usuario debe interrumpir el evento activo (nuevo concepto de "reacción
+efímera" por encima de la prioridad normal, con su propio TTL corto).
+
+---
+
 ## Resueltas
 
 Se dejan acá con la fecha para no re-descubrirlas.

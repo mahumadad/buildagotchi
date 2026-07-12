@@ -33,7 +33,8 @@ describe('createIdleExpressionModifier', () => {
     });
     const face1 = freshFace();
     mod(16, face1);
-    mod(400, face1); // consume full duration → animation ends
+    mod(400, face1); // completes at t=1: sin(π)≈0 → the eye is back to open ON THIS face
+    expect(face1.eyes.left.open).toBeCloseTo(1, 5);
     const face2 = freshFace();
     mod(16, face2);  // next tick after end: not animating yet (new gap), eye open
     expect(face2.eyes.left.open).toBe(1);
