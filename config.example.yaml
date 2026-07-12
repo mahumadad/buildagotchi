@@ -44,6 +44,7 @@ attentionManager:
   ttlOverrides:
     - { source: claude, category: permission, ttl: infinite }
     - { source: claude, category: permission_critical, ttl: infinite }
+    - { source: firmware, category: head_pet, ttl: 3s }
 
   maxQueueSize: 20                                # drops oldest lowest-severity when full
   replacementPolicy: higher_severity_interrupts   # or: always_enqueue
@@ -147,6 +148,14 @@ stateRules:
       leds: [{ row: left, color: green, pattern: blink }, { row: right, color: green, pattern: blink }]
       sound: approve
       balloon: "🎉 {streak} días seguidos"
+
+  # ── Caricia ──────────────────────────────────────────────────────────────
+  # `pet` publica su propia categoría head_pet (no touch_head) porque
+  # stateRules sólo discrimina por source/category/severity, nunca por
+  # payload — swipe_fwd/swipe_back (Fase 3) siguen bajo touch_head y no
+  # disparan esto. ttlOverride corto abajo la retira sola en 3s.
+  - match: { source: firmware, category: head_pet }
+    state: { emotion: HAPPY, decorators: [heart], leds: [] }
 
   # ── Ciclo de trabajo de Claude ───────────────────────────────────────────
   # `response` is sticky (S2.5.2): the assistant's answer survives idle, so the

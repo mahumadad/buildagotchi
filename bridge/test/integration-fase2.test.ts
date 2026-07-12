@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeAdapter } from '../src/adapters/claude-adapter.js';
 import { AttentionManager } from '../src/core/attention.js';
 import { EventBus } from '../src/core/bus.js';
-import type { Event } from '../src/core/events.js';
+import { type Event, newEvent } from '../src/core/events.js';
 import { StateMachine } from '../src/core/state-machine.js';
 import { loadPreset } from '../src/personality/loader.js';
 import { PersonalityManager } from '../src/personality/personality.js';
@@ -49,6 +49,10 @@ describe('Phase 2 integration', () => {
         {
           match: { source: 'claude', category: 'permission' },
           state: { emotion: 'DOUBTFUL', decorators: [], leds: [] },
+        },
+        {
+          match: { source: 'firmware', category: 'head_pet' },
+          state: { emotion: 'HAPPY', decorators: ['heart'], leds: [] },
         },
         { match: { severity: 'critical' }, state: { emotion: 'ANGRY', decorators: [], leds: [] } },
         { match: { severity: 'high' }, state: { emotion: 'SAD', decorators: [], leds: [] } },
@@ -324,5 +328,14 @@ describe('Phase 2 integration', () => {
     expect(pm.idleEmotion()).toBe('NEUTRAL');
     pm.reload(loadPreset('mascot'));
     expect(pm.idleEmotion()).toBe('HAPPY');
+  });
+
+  // Test 11: head_pet gesture → HAPPY + heart
+  it('a head_pet event resolves to HAPPY with a heart decorator', async () => {
+    await setup();
+    bus.publish(newEvent({ source: 'firmware', category: 'head_pet', severity: 'low', payload: { gesture: 'pet' } }));
+    const s = stateMachine.current();
+    expect(s.emotion).toBe('HAPPY');
+    expect(s.decorators).toContain('heart');
   });
 });

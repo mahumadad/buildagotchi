@@ -690,7 +690,7 @@ export class BridgeServer {
     this.#opts.bus.publish(
       newEvent({
         source: 'firmware',
-        category: 'touch_head',
+        category: gesture === 'pet' ? 'head_pet' : 'touch_head',
         severity: 'low',
         payload: { gesture },
       }),
@@ -802,7 +802,7 @@ export class BridgeServer {
       return;
     }
     const gesture = parsed.gesture;
-    const valid = ['tap', 'swipe_fwd', 'swipe_back', 'hold'];
+    const valid = ['tap', 'swipe_fwd', 'swipe_back', 'hold', 'pet'];
     if (typeof gesture !== 'string' || !valid.includes(gesture)) {
       sendJson(res, 400, { error: `gesture must be one of: ${valid.join(', ')}` });
       return;
@@ -823,7 +823,7 @@ export class BridgeServer {
     }
     const event = newEvent({
       source: 'firmware',
-      category: 'touch_head',
+      category: gesture === 'pet' ? 'head_pet' : 'touch_head',
       severity: gesture === 'hold' ? 'medium' : 'low',
       payload: { gesture },
     });

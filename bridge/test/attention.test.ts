@@ -426,4 +426,22 @@ describe('AttentionManager — what Gate 1 needs to be able to count', () => {
 
     expect(d.record).not.toHaveBeenCalled();
   });
+
+  it('the head_pet reaction expires within 5s (ttlOverride 3s)', () => {
+    const d = deps();
+    const am = new AttentionManager(
+      baseConfig({
+        ttlOverrides: [{ source: 'firmware', category: 'head_pet', ttl: 3_000 }],
+      }),
+      d,
+    );
+
+    am.push(ev({ source: 'firmware', category: 'head_pet', severity: 'low' }));
+    am.tick();
+    expect(am.snapshot().active?.event.category).toBe('head_pet');
+
+    vi.advanceTimersByTime(3_001);
+    am.tick();
+    expect(am.snapshot().active).toBeNull();
+  });
 });
