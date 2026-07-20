@@ -58,10 +58,17 @@ describe('config.yaml decorators', () => {
     expect(sm.current().decorators).toEqual([]);
   });
 
+  it('prompt wears thinking while Claude is working', () => {
+    const sm = new StateMachine(realRules(), deps());
+    sm.apply(active('prompt', { cwd: '/x/proj', text: 'hola' }));
+    expect(sm.current().decorators).toContain('thinking');
+    expect(sm.current().emotion).toBe('NEUTRAL');
+  });
+
   it('every decorator the config names is one the emulator can draw', () => {
     // The bug this guards against is the whole point of the day: a decorator the
     // config asks for that the renderer does not know, so it silently no-ops.
-    const KNOWN = new Set(['heart', 'angry_mark', 'sweat', 'sleepy_z', 'bubble', 'hot_steam']);
+    const KNOWN = new Set(['heart', 'angry_mark', 'sweat', 'sleepy_z', 'bubble', 'hot_steam', 'thinking']);
     const used = new Set<string>();
     for (const rule of realRules()) {
       for (const d of rule.state.decorators ?? []) used.add(d);

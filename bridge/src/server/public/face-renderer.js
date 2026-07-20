@@ -376,6 +376,23 @@ function drawBalloon(ctx, layout, theme, { offsetPx = 0, pop = 1, dy = 0 } = {})
   ctx.restore();
 }
 
+function createThinkingDecorator(x, y) {
+  let time = 0;
+  const radius = 2.5;
+  const spacing = 7;
+  return (ctx, face, tickMs) => {
+    time = (time + tickMs) % 1200;
+    const [pR, pG, pB] = face.theme.primary;
+    ctx.fillStyle = `rgb(${pR},${pG},${pB})`;
+    for (let i = 0; i < 3; i++) {
+      const offset = Math.max(0, Math.sin((time + i * 200) / 200) * 3);
+      ctx.beginPath();
+      ctx.arc(x + i * spacing, y - offset, radius, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  };
+}
+
 // --- Decorator mapping from bridge state ---
 
 const DECORATOR_MAP = {
@@ -385,6 +402,8 @@ const DECORATOR_MAP = {
   sleepy_z: (f) => createSleepyZDecorator(f.w - 40, 30),
   bubble: (f) => createBubbleDecorator(f.w - 50, f.h - 70, 40, 50),
   hot_steam: (f) => createHotSteamDecorator(f.w / 2 - 15, 55),
+  // Cerca de la boca, a la derecha: visible sin tapar ni ojos ni burbuja.
+  thinking: (f) => createThinkingDecorator(f.w - 110, f.h - 70),
 };
 
 const EMOTION_DECORATORS = {

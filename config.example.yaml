@@ -47,6 +47,7 @@ attentionManager:
   ttlOverrides:
     - { source: claude, category: permission, ttl: infinite }
     - { source: claude, category: permission_critical, ttl: infinite }
+    - { source: claude, category: prompt, ttl: 2m }  # keep the "thinking" indicator alive
     - { source: firmware, category: head_pet, ttl: 3s }
 
   maxQueueSize: 20                                # drops oldest lowest-severity when full
@@ -179,6 +180,7 @@ stateRules:
   - match: { source: claude, category: prompt }
     state:
       emotion: NEUTRAL
+      decorators: [thinking]   # indica que Claude está trabajando en esta sesión
       gaze: center
       leds: [{ row: right, color: blue, pattern: blink }]
 
@@ -186,6 +188,14 @@ stateRules:
   - match: { source: claude, category: subagent }
     state:
       emotion: NEUTRAL
+      decorators: []
+      leds: [{ row: right, color: blue, pattern: solid }]
+
+  # Silent by design: a subagent starting shouldn't interrupt (Calm Tech).
+  - match: { source: claude, category: subagent }
+    state:
+      emotion: NEUTRAL
+      decorators: []
       leds: [{ row: right, color: blue, pattern: solid }]
 
   - match: { source: claude, category: notification }
