@@ -132,7 +132,7 @@ describe('D-06: a response retires its own prompt', () => {
     stop(ctx.adapter, 's1');
 
     const snap = ctx.attentionManager.snapshot();
-    const inFlight = [...(snap.active ? [snap.active.event] : []), ...snap.queue];
+    const inFlight = [...(snap.active ? [snap.active.event] : []), ...snap.queue.map((a) => a.event)];
     expect(inFlight.filter((e) => e.category === 'prompt')).toEqual([]);
   });
 
@@ -141,7 +141,7 @@ describe('D-06: a response retires its own prompt', () => {
     prompt(ctx.adapter, 's1', 'segunda');
 
     const snap = ctx.attentionManager.snapshot();
-    const prompts = [...(snap.active ? [snap.active.event] : []), ...snap.queue].filter(
+    const prompts = [...(snap.active ? [snap.active.event] : []), ...snap.queue.map((a) => a.event)].filter(
       (e) => e.category === 'prompt',
     );
     expect(prompts).toHaveLength(1);
@@ -154,7 +154,7 @@ describe('D-06: a response retires its own prompt', () => {
     stop(ctx.adapter, 'A');
 
     const snap = ctx.attentionManager.snapshot();
-    const inFlight = [...(snap.active ? [snap.active.event] : []), ...snap.queue];
+    const inFlight = [...(snap.active ? [snap.active.event] : []), ...snap.queue.map((a) => a.event)];
     const prompts = inFlight.filter((e) => e.category === 'prompt');
     // B's prompt survives; A's is gone.
     expect(prompts).toHaveLength(1);
@@ -182,7 +182,7 @@ describe('D-06: a response retires its own prompt', () => {
     stop(ctx.adapter, 's1');
 
     const snap = ctx.attentionManager.snapshot();
-    const inFlight = [...(snap.active ? [snap.active.event] : []), ...snap.queue];
+    const inFlight = [...(snap.active ? [snap.active.event] : []), ...snap.queue.map((a) => a.event)];
     // Neither the permission nor the prompt survives; both were retired by
     // distinct events, each naming its own target.
     expect(inFlight.filter((e) => e.category === 'permission_critical')).toEqual([]);
@@ -202,7 +202,7 @@ describe('D-06: a response retires its own prompt', () => {
     stop(ctx.adapter, 's1', 'segunda respuesta');
 
     const snap = ctx.attentionManager.snapshot();
-    const inFlight = [...(snap.active ? [snap.active.event] : []), ...snap.queue];
+    const inFlight = [...(snap.active ? [snap.active.event] : []), ...snap.queue.map((a) => a.event)];
     expect(inFlight.map((e) => e.id)).not.toContain(firstResponse);
     expect(snap.active?.event.payload.text).toBe('segunda respuesta');
   });

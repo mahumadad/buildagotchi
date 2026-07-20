@@ -686,6 +686,20 @@ body {
   min-width: 4.5rem;
 }
 
+.attention-queue-item .attention-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attention-queue-item .attention-ttl {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-left: auto;
+}
+
 /* ── Screen history + event grouping (M15) ──────────────────────────── */
 
 .balloon-history {

@@ -211,10 +211,10 @@ export class AttentionManager {
     // Not found — no-op (spec: no-op con debug log; sin logger inyectado en M3, se omite).
   }
 
-  snapshot(): { active: ActiveAttention | null; queue: Event[]; mode: Mode } {
+  snapshot(): { active: ActiveAttention | null; queue: ActiveAttention[]; mode: Mode } {
     return {
       active: this.#active,
-      queue: this.#queue.map((item) => item.event),
+      queue: this.#queue.map((item) => ({ event: item.event, deadline: item.deadline })),
       mode: this.#mode,
     };
   }

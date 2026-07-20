@@ -115,7 +115,7 @@ describe('AttentionManager', () => {
       eventId: critical.id,
     });
     expect(am.snapshot().active?.event.id).toBe(critical.id);
-    expect(am.snapshot().queue.map((e) => e.id)).toEqual([medium.id]);
+    expect(am.snapshot().queue.map((a) => a.event.id)).toEqual([medium.id]);
 
     am.resolve(critical.id, 'approved', 'head');
     expect(am.snapshot().active?.event.id).toBe(medium.id);
@@ -131,7 +131,7 @@ describe('AttentionManager', () => {
     am.push(second);
 
     expect(am.snapshot().active?.event.id).toBe(first.id);
-    expect(am.snapshot().queue.map((e) => e.id)).toEqual([second.id]);
+    expect(am.snapshot().queue.map((a) => a.event.id)).toEqual([second.id]);
   });
 
   it('always_enqueue policy never interrupts', () => {
@@ -144,7 +144,7 @@ describe('AttentionManager', () => {
     am.push(critical);
 
     expect(am.snapshot().active?.event.id).toBe(medium.id);
-    expect(am.snapshot().queue.map((e) => e.id)).toEqual([critical.id]);
+    expect(am.snapshot().queue.map((a) => a.event.id)).toEqual([critical.id]);
   });
 
   it('a full queue drops the lowest-severity, oldest entry among queue + incoming', () => {
@@ -166,7 +166,7 @@ describe('AttentionManager', () => {
       dropped: e1.id,
       eventId: e1.id,
     });
-    expect(am.snapshot().queue.map((e) => e.id)).toEqual([e2.id, e3.id]);
+    expect(am.snapshot().queue.map((a) => a.event.id)).toEqual([e2.id, e3.id]);
   });
 
   it('drops the incoming event itself when it is the worst of the combined set', () => {
@@ -188,7 +188,7 @@ describe('AttentionManager', () => {
       dropped: e3.id,
       eventId: e3.id,
     });
-    expect(am.snapshot().queue.map((e) => e.id)).toEqual([e1.id, e2.id]);
+    expect(am.snapshot().queue.map((a) => a.event.id)).toEqual([e1.id, e2.id]);
   });
 
   it('FOCUS rejects medium on push, and dropped both queued and active medium (SA6)', () => {
@@ -310,7 +310,7 @@ describe('AttentionManager', () => {
     expect(d.onActiveChange).toHaveBeenLastCalledWith(
       expect.objectContaining({ event: exception }),
     );
-    expect(am.snapshot().queue.map((e) => e.id)).toEqual([meeting.id]);
+    expect(am.snapshot().queue.map((a) => a.event.id)).toEqual([meeting.id]);
 
     vi.advanceTimersByTime(3_000); // t = 6000
     const permission = ev({
@@ -324,7 +324,7 @@ describe('AttentionManager', () => {
     expect(d.onActiveChange).toHaveBeenLastCalledWith(
       expect.objectContaining({ event: exception }),
     );
-    expect(am.snapshot().queue.map((e) => e.id)).toEqual([permission.id, meeting.id]);
+    expect(am.snapshot().queue.map((a) => a.event.id)).toEqual([permission.id, meeting.id]);
 
     vi.advanceTimersByTime(27_000); // t = 33000 -> exception's 30s TTL (from t=3000) expires
     am.tick();

@@ -150,7 +150,7 @@ describe('permission resolve chain — hook → adapter → bus → AM', () => {
     const snap = ctx.attentionManager.snapshot();
     expect(snap.active?.event.category).not.toBe('permission_critical');
     // And the stale permission isn't lurking in the queue either.
-    expect(snap.queue.map((e) => e.category)).not.toContain('permission_critical');
+    expect(snap.queue.map((a) => a.event.category)).not.toContain('permission_critical');
   });
 
   it('Stop (user typed instead of approving) also releases the AM active event', async () => {
@@ -192,7 +192,7 @@ describe('permission resolve chain — hook → adapter → bus → AM', () => {
     });
     let snap = ctx.attentionManager.snapshot();
     expect(snap.active?.event.payload.sessionId).toBe('A');
-    expect(snap.queue.map((e) => e.payload.sessionId)).toContain('B');
+    expect(snap.queue.map((a) => a.event.payload.sessionId)).toContain('B');
 
     // Approving A retires ONLY A. B is promoted and keeps waiting for the user.
     ctx.adapter.handleHookEvent({ hook_event_name: 'PostToolUse', session_id: 'A', cwd: '/tmp/a' });
@@ -203,7 +203,7 @@ describe('permission resolve chain — hook → adapter → bus → AM', () => {
     // A's permission is gone — not active, not lurking in the queue.
     // (A's `permission_resolved` IS queued: it's the "approved" flash, an
     // ambient event waiting behind B's critical one. That's correct.)
-    const pendingPermissions = snap.queue.filter(
+    const pendingPermissions = snap.queue.map((a) => a.event).filter(
       (e) => e.category === 'permission' || e.category === 'permission_critical',
     );
     expect(pendingPermissions).toHaveLength(0);
@@ -231,7 +231,7 @@ describe('permission resolve chain — hook → adapter → bus → AM', () => {
 
     const snap = ctx.attentionManager.snapshot();
     expect(snap.active?.event.id).not.toBe(target.id);
-    expect(snap.queue.map((e) => e.id)).not.toContain(target.id);
+    expect(snap.queue.map((a) => a.event.id)).not.toContain(target.id);
   });
 
   it('a resolvesEventId pointing at nothing is a harmless no-op', () => {

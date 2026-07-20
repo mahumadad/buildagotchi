@@ -103,7 +103,7 @@ function assertNoOrphanPermissions(
   const snap = attentionManager.snapshot();
   const liveSessions = new Set(adapter.sessions().keys());
 
-  const inFlight: Event[] = [...(snap.active ? [snap.active.event] : []), ...snap.queue];
+  const inFlight: Event[] = [...(snap.active ? [snap.active.event] : []), ...snap.queue.map((a) => a.event)];
 
   const orphans = inFlight.filter((e) => {
     if (!PERMISSION_CATEGORIES.has(e.category)) return false;
@@ -218,7 +218,7 @@ describe('INVARIANT: no permission outlives its session', () => {
     assertNoOrphanPermissions(ctx.attentionManager, ctx.adapter);
     // Nothing permission-shaped is left anywhere.
     const snap = ctx.attentionManager.snapshot();
-    const stillThere = [...(snap.active ? [snap.active.event] : []), ...snap.queue].filter((e) =>
+    const stillThere = [...(snap.active ? [snap.active.event] : []), ...snap.queue.map((a) => a.event)].filter((e) =>
       PERMISSION_CATEGORIES.has(e.category),
     );
     expect(stillThere).toEqual([]);

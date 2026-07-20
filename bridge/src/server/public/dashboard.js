@@ -246,7 +246,8 @@ function paintAttention() {
   }
   if (attentionQueueEl) {
     attentionQueueEl.innerHTML = '';
-    for (const ev of queue) {
+    for (const item of queue) {
+      const ev = item.event;
       const li = document.createElement('li');
       li.className = 'attention-queue-item';
       li.dataset.severity = ev.severity ?? 'ambient';
@@ -256,8 +257,12 @@ function paintAttention() {
       const label = document.createElement('span');
       label.className = 'attention-label';
       label.textContent = `${ev.source ?? ''} · ${ev.category ?? ''}`.trim();
+      const ttl = document.createElement('span');
+      ttl.className = 'attention-ttl';
+      ttl.textContent = formatTtl(item.deadline);
       li.appendChild(sev);
       li.appendChild(label);
+      li.appendChild(ttl);
       attentionQueueEl.appendChild(li);
     }
   }
