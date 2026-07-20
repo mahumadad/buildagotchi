@@ -26,19 +26,22 @@ server:
 # and SPEC §7). Transitions to background mood when the queue is empty.
 attentionManager:
   # How long an event lives in the queue without explicit resolution.
+  # Monótono con la severidad: lo importante dura más en pantalla que lo
+  # trivial. (Antes estaba invertido — critical 30s vs low 10m — y una
+  # notificación low podía ocupar la cara 10 minutos.)
   ttlBySeverity:
-    critical: 30s
+    critical: 5m
     high: 2m
-    medium: 5m
-    low: 10m
-    ambient: 30s
+    medium: 1m
+    low: 30s
+    ambient: 15s
 
   # Per-source overrides. `infinite` parses to null internally — the event
   # never times out on its own; only resolves via explicit action
   # (approve/deny, dismiss) or being replaced by a higher-severity event.
   # S2.5.8: BOTH permission categories need the infinite override. Without the
   # `permission_critical` entry, the destructive-command permission would fall
-  # to ttlBySeverity.critical (30s) and its balloon would ghost — the exact
+  # to ttlBySeverity.critical (5m) and its balloon would ghost — the exact
   # scenario the council reproduced on 2026-07-09. Test 4 of M13 enforces this
   # invariant against `CLAUDE_CRITICAL_CATEGORIES`.
   ttlOverrides:

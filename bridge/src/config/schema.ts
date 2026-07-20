@@ -104,11 +104,11 @@ export const ConfigSchema = z.object({
     .object({
       ttlBySeverity: z
         .object({
-          critical: Duration.default('30s'),
+          critical: Duration.default('5m'),
           high: Duration.default('2m'),
-          medium: Duration.default('5m'),
-          low: Duration.default('10m'),
-          ambient: Duration.default('30s'),
+          medium: Duration.default('1m'),
+          low: Duration.default('30s'),
+          ambient: Duration.default('15s'),
         })
         .default({}),
       ttlOverrides: z.array(TtlOverrideSchema).default([]),

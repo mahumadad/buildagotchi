@@ -20,29 +20,6 @@
     </header>
     <main class="app-grid">
       <aside class="sidebar">
-        <section class="panel sim-panel">
-          <h2>Simulation</h2>
-          <div class="sim-group">
-            <label>Mode</label>
-            <button id="sim-mode" class="sim-btn">Cycle mode</button>
-          </div>
-          <div class="sim-group">
-            <label>Claude</label>
-            <button id="sim-permission" class="sim-btn">Fake permission prompt</button>
-          </div>
-          <div class="sim-group">
-            <label>Replay</label>
-            <div class="sim-row">
-              <input id="replay-lastn" type="number" min="1" value="20" style="width: 4rem" title="How many past events" />
-              <button id="sim-replay" class="sim-btn">Replay today</button>
-            </div>
-            <div id="replay-result" class="sim-result"></div>
-          </div>
-          <div class="sim-group">
-            <label>Emotion</label>
-            <div class="sim-row" id="sim-emotions"></div>
-          </div>
-        </section>
         <section class="panel face-panel">
           <div class="screen-view-badge" id="screen-view-badge">face</div>
           <div class="screen-stats-overlay" id="screen-stats-overlay" hidden></div>
@@ -79,14 +56,6 @@
           </div>
           <div id="state-mode" class="state-mode">NORMAL</div>
         </section>
-        <section class="panel health-panel">
-          <h2>Health</h2>
-          <div id="health-adapters" class="health-list"></div>
-          <div class="health-transport">
-            <span>Transport:</span>
-            <span id="health-transport-status" class="badge">unknown</span>
-          </div>
-        </section>
         <section class="panel attention-panel">
           <h2>Attention</h2>
           <div class="attention-mode" id="attention-mode">
@@ -98,6 +67,37 @@
           </div>
           <div class="attention-queue-header" id="attention-queue-header">Queue (0)</div>
           <ul class="attention-queue" id="attention-queue"></ul>
+        </section>
+        <section class="panel health-panel">
+          <h2>Health</h2>
+          <div id="health-adapters" class="health-list"></div>
+          <div class="health-transport">
+            <span>Transport:</span>
+            <span id="health-transport-status" class="badge">unknown</span>
+          </div>
+        </section>
+        <section class="panel sim-panel">
+          <h2>Simulation</h2>
+          <div class="sim-group">
+            <label>Mode</label>
+            <button id="sim-mode" class="sim-btn">Cycle mode</button>
+          </div>
+          <div class="sim-group">
+            <label>Claude</label>
+            <button id="sim-permission" class="sim-btn">Fake permission prompt</button>
+          </div>
+          <div class="sim-group">
+            <label>Replay</label>
+            <div class="sim-row">
+              <input id="replay-lastn" type="number" min="1" value="20" style="width: 4rem" title="How many past events" />
+              <button id="sim-replay" class="sim-btn">Replay today</button>
+            </div>
+            <div id="replay-result" class="sim-result"></div>
+          </div>
+          <div class="sim-group">
+            <label>Emotion</label>
+            <div class="sim-row" id="sim-emotions"></div>
+          </div>
         </section>
       </aside>
       <section class="content">

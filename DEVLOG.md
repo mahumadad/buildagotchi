@@ -600,6 +600,47 @@ tráfico BLE innecesario:
 
 ---
 
+## 2026-07-19 — Bubble legible: separación de la boca, scroll y TTLs por prioridad
+
+### Qué se hizo
+
+Cuatro mejoras de presentación pedidas tras revisar el dashboard (cambios sin
+commit aún, en working tree):
+
+- **Bubble despegado de la boca** (`balloon-layout.mjs`): `tailLength` 12 → 28
+  (antes quedaba a 8px de la boca cerrada y se solapaba con la boca abierta,
+  que baja hasta y=177) y la punta de la cola ahora apunta al *borde inferior*
+  de la boca (`tailTipOffset: 8` → y=156) en vez de a su centro, donde quedaba
+  enterrada. Además la burbuja hereda el `breathY` de la cara (`dy` en
+  `drawBalloon`), así la cola no se despega cuando el robot respira.
+- **Scroll de texto en el bubble**: `layoutBalloon` ya no trunca a 2 líneas con
+  "…" — devuelve todas las líneas (tope de seguridad `maxLines: 12`; el servidor
+  ya trunca a 240 chars ≈ 8 líneas) y la ventana visible de `visibleLines: 2` se
+  desliza con `scrollOffsetPx()`, función pura de `elapsedMs` (pausa inicial
+  1.2s, desliz ease-out de 250ms por línea, pausa 800ms, pausa final 2.5s y
+  vuelve al inicio). Clip al `roundRect` + pop de entrada de 180ms anclado a la
+  punta de la cola.
+- **TTLs monótonos con la severidad** (`config.example.yaml`, `config.yaml`,
+  defaults de `schema.ts`): estaban invertidos (`critical: 30s` vs `low: 10m` —
+  una notificación `low` podía ocupar la cara 10 minutos). Ahora
+  `critical: 5m, high: 2m, medium: 1m, low: 30s, ambient: 15s`. Las dos
+  categorías `critical` del adapter siguen con override infinito, así que el
+  cambio de `critical` solo afecta a eventos externos (`POST /events`).
+- **Dashboard reordenado** (`index.html`): el sidebar era Simulation → Face →
+  Health → Attention; ahora es Face → Attention → Health → Simulation. Lo
+  accionable queda junto a la cara y el tooling de dev al fondo.
+
+### Decisiones
+
+- **Divergencia consciente con el firmware**: el robot físico trunca a 2 líneas;
+  el emulador ahora muestra todo el texto con scroll. El *wrap* (métrica
+  k8x12-12) se mantiene idéntico y testeado — lo que cambia es solo la
+  presentación. Si el scroll gusta, se porta al firmware en Fase 1B.
+- El scroll es función pura para testearlo sin canvas (14 tests en
+  `balloon-layout.test.ts`, 544/544 verde).
+
+---
+
 ## Pendientes inmediatos
 
 - [ ] Push a GitHub (20 commits ahead de `origin/main`)
@@ -614,3 +655,4 @@ tráfico BLE innecesario:
 [DEBT.md](DEBT.md) queda con **una sola entrada abierta**, D-03, y no es un bug:
 es la decisión de qué hacer con `pulse` en Fase 1B. Las cinco restantes están en
 "Resueltas" con su lección.
+

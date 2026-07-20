@@ -1,7 +1,7 @@
 // Port of stack-chan firmware face renderer to HTML Canvas.
 // Source: stack-chan/firmware/stackchan/renderers/
 
-import { BALLOON, layoutBalloon } from './balloon-layout.mjs';
+import { BALLOON, layoutBalloon, scrollOffsetPx } from './balloon-layout.mjs';
 import { createIdleExpressionModifier } from './idle-expression.mjs';
 
 const INTERVAL = 1000 / 10;
@@ -330,11 +330,21 @@ function createHotSteamDecorator(x, y) {
 
 // Feature A: burbuja redondeada + cola hacia la boca, colores del tema.
 // La cola no existe en el firmware upstream — compromiso del fork (DECISIONS).
-function drawBalloon(ctx, layout, theme) {
+// `offsetPx` desplaza el texto (scroll), `pop` es la escala de entrada (0..1)
+// anclada a la punta de la cola, y `dy` es el breath de la cara para que la
+// cola siga pegada a la boca cuando el robot respira.
+function drawBalloon(ctx, layout, theme, { offsetPx = 0, pop = 1, dy = 0 } = {}) {
   const [pR, pG, pB] = theme.primary;
   const [sR, sG, sB] = theme.secondary;
   const { x, y, w, h, lines, tail } = layout;
   ctx.save();
+
+  ctx.translate(0, dy);
+  if (pop < 1) {
+    ctx.translate(tail.tipX, tail.tipY);
+    ctx.scale(pop, pop);
+    ctx.translate(-tail.tipX, -tail.tipY);
+  }
 
   ctx.fillStyle = `rgb(${pR},${pG},${pB})`;
   ctx.beginPath();
@@ -348,14 +358,21 @@ function drawBalloon(ctx, layout, theme) {
   ctx.closePath();
   ctx.fill();
 
+  // Texto clipeado a la burbuja: el scroll nunca se sale del borde redondeado.
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, BALLOON.radius);
+  ctx.clip();
   ctx.fillStyle = `rgb(${sR},${sG},${sB})`;
   ctx.font = '12px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const textTop = y + h / 2 - ((lines.length - 1) * BALLOON.lineH) / 2;
+  const textTop = y + BALLOON.paddingY + BALLOON.lineH / 2 - offsetPx;
   lines.forEach((line, i) => {
     ctx.fillText(line, x + w / 2, textTop + i * BALLOON.lineH);
   });
+  ctx.restore(); // clip
+
   ctx.restore();
 }
 
@@ -437,7 +454,8 @@ export class FaceRenderer {
 
   setBalloon(text) {
     if (text && text !== this.#balloon?.text) {
-      this.#balloon = { text, layout: layoutBalloon(text) };
+      // shownAt arranca el scroll y la animación de entrada (pop).
+      this.#balloon = { text, layout: layoutBalloon(text), shownAt: performance.now() };
     } else if (!text) {
       this.#balloon = null;
     }
@@ -501,9 +519,15 @@ export class FaceRenderer {
 
     ctx.restore(); // breathY
 
-    // Balloon (outside breath transform)
+    // Balloon (outside breath transform — el dy se aplica dentro de drawBalloon
+    // para que la cola siga a la boca sin heredar el clip de la cara)
     if (this.#balloon) {
-      drawBalloon(ctx, this.#balloon.layout, face.theme);
+      const elapsed = performance.now() - this.#balloon.shownAt;
+      drawBalloon(ctx, this.#balloon.layout, face.theme, {
+        offsetPx: scrollOffsetPx(this.#balloon.layout.lines.length, elapsed),
+        pop: Math.min(1, elapsed / 180),
+        dy: breathY,
+      });
     }
   }
 }

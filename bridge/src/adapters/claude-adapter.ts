@@ -39,7 +39,7 @@ export const CLAUDE_CATEGORIES = [
  * Categories emitted with `severity: 'critical'`. Consumed by the TTL guard
  * test (S2.5.8): for every entry here, `AmConfig.ttlOverrides` MUST resolve to
  * `null` (infinite). Without this, `permission_critical` would silently fall
- * to `ttlBySeverity.critical` = 30s and leave the balloon stale — the exact
+ * to `ttlBySeverity.critical` (5m) and leave the balloon stale — the exact
  * scenario the council verified on 2026-07-09.
  */
 export const CLAUDE_CRITICAL_CATEGORIES = ['permission', 'permission_critical'] as const;
