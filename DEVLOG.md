@@ -641,6 +641,57 @@ commit aún, en working tree):
 
 ---
 
+## 2026-07-19 (tarde) — Mejoras accionables: sonido crítico, response->response, teclado y TTL en cola
+
+### Qué se hizo
+
+Cuatro commits nuevos tras el filtro del usuario: cualquier acción o sonido
+ debe poder ayudar y ser reproducible en el StackChan físico.
+
+- **Sonido distinto para `permission_critical`** (`config.example.yaml` y test
+  M13-7): un comando destructivo (`sudo rm -rf`, etc.) ya no suena como un
+  permiso cualquiera (`permission`) sino como alarma (`error`). El firmware ya
+  transporta `sound` en `ResolvedState` y tiene capacidad de audio (tono TTS
+  en `stackchan/wasm/tone.ts`); este cambio solo cambia qué sonido se pide,
+  no añade una capacidad nueva del emulador.
+- **Response retira a la response anterior** (`claude-adapter.ts` + AM):
+  ambas son `ambient`, así que sin esto una respuesta nueva se encolaba detrás
+  de la anterior hasta 15s mostrando texto viejo de Claude. El `Stop` hook
+  ahora emite `resolvesEventIds` (plural) para retirar, en un solo tiro, tanto
+  su propio prompt (D-06) como la `lastResponseEventId` de la sesión. El AM
+  acepta la lista. El sticky balloon sigue sobreviviendo al idle; solo lo
+  reemplaza una respuesta más nueva.
+- **Atajos de teclado A/B/C** (`dashboard.js` + `index.html`): espejan los
+  botones físicos del CoreS3. `A` aprueba/denega un permiso pendiente, `B`
+  lo contrario, `C` cambia de modo. Ignoran inputs y modificadores para no
+  romper navegación o edición. Paridad con el robot, no divergencia.
+- **TTL en la cola del Attention panel** (`attention.ts`, `server.ts`,
+  `dashboard.*`): el snapshot del AM ahora incluye `deadline` en cada ítem
+  encolado (igual que en el activo). El dashboard muestra la cuenta atrás al
+  lado de cada evento en cola, para que el usuario vea qué va a morir sin
+  mostrarse. El payload SSE cambia (`queue` pasa a `{event, deadline}[]`),
+  pero el único consumidor es el dashboard.
+
+### Decisiones
+
+- **Divergencias cero con el hardware**: A, B, C y D son o bien cambios de
+  protocolo (sound), lógica pura del servidor (resolvesEventIds, TTL en la
+  cola) o espejo de botones físicos (teclado). Nada es cosmético del emulador
+  que el robot no pueda reproducir.
+- **D (TTL en cola) es observabilidad, no acción**: no está en el robot, pero
+  tampoco promete una capacidad que el robot no tenga; solo da más contexto al
+  dashboard. El usuario pidió ayuda, y ver el TTL ayuda a entender por qué
+  desaparece algo.
+
+### Commits
+
+- `e9f0f1e` — Give destructive permissions the alarm sound
+- `3207782` — Retire the previous response when a new one arrives
+- `a95f53c` — Add keyboard shortcuts A/B/C mirroring the physical buttons
+- `3548714` — Show each queue item remaining TTL in the Attention panel
+
+---
+
 ## Pendientes inmediatos
 
 - [ ] Push a GitHub (20 commits ahead de `origin/main`)
