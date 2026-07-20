@@ -30,8 +30,8 @@ describe('BalloonHistory (M15)', () => {
     // twice). Two DIFFERENT eventIds with the same TEXT still collapse into
     // one entry — the history is about what was seen, not what caused it.
     const h = new BalloonHistory(10);
-    h.push('A', 'e1');
-    h.push('A', 'e2');
+    h.push('A', { eventId: 'e1' });
+    h.push('A', { eventId: 'e2' });
     expect(h.recent().length).toBe(1);
   });
 
@@ -43,7 +43,7 @@ describe('BalloonHistory (M15)', () => {
 
   it('#5: stores the eventId when provided', () => {
     const h = new BalloonHistory(10);
-    h.push('x', 'e1');
+    h.push('x', { eventId: 'e1' });
     expect(h.recent()[0]?.eventId).toBe('e1');
   });
 
@@ -78,5 +78,31 @@ describe('BalloonHistory (M15)', () => {
     h.push('A');
     h.push('B');
     expect(h.recent().length).toBe(0);
+  });
+
+  it('records stickiness and lastSticky returns the most recent sticky balloon', () => {
+    const h = new BalloonHistory(10);
+    h.push('transient', { sticky: false });
+    h.push('sticky-one', { sticky: true });
+    h.push('transient-two', { sticky: false });
+    h.push('sticky-two', { sticky: true });
+    expect(h.lastSticky()?.text).toBe('sticky-two');
+    expect(h.recent().map((e) => e.sticky)).toEqual([true, false, true, false]);
+  });
+
+  it('lastSticky returns null when no sticky balloon was ever pushed', () => {
+    const h = new BalloonHistory(10);
+    h.push('A', { sticky: false });
+    h.push('B', { sticky: false });
+    expect(h.lastSticky()).toBeNull();
+  });
+
+  it('lastSticky prefers the newest sticky over an older one', () => {
+    const h = new BalloonHistory(10);
+    h.push('old-sticky', { sticky: true });
+    h.push('newer-transient', { sticky: false });
+    h.push('newest-sticky', { sticky: true });
+    h.push('current-transient', { sticky: false });
+    expect(h.lastSticky()?.text).toBe('newest-sticky');
   });
 });

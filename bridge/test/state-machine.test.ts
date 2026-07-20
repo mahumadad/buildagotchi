@@ -244,4 +244,23 @@ describe('StateMachine — latency lands in the recorder (D-10)', () => {
     const data = d.record.mock.calls[0]?.[1] as { latencyMs?: number };
     expect(data.latencyMs).toBe(0);
   });
+
+  it('restoreBalloon seeds a sticky balloon for clients that connect after startup', () => {
+    const d = deps();
+    const sm = new StateMachine(RULE, d);
+    sm.restoreBalloon('previous answer');
+    expect(sm.current().balloon).toBe('previous answer');
+    expect(sm.current().emotion).toBe('NEUTRAL');
+    expect(d.emit).toHaveBeenCalledWith(
+      expect.objectContaining({ balloon: 'previous answer', decorators: [], leds: [] }),
+    );
+  });
+
+  it('a restored sticky balloon survives the first background mood', () => {
+    const d = deps();
+    const sm = new StateMachine(RULE, d);
+    sm.restoreBalloon('previous answer');
+    sm.apply(null);
+    expect(sm.current().balloon).toBe('previous answer');
+  });
 });

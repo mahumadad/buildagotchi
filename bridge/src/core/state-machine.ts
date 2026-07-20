@@ -354,8 +354,23 @@ export class StateMachine {
       next.balloon !== '' &&
       next.balloon !== from.balloon
     ) {
-      this.#deps.balloonHistory.push(next.balloon, eventId);
+      this.#deps.balloonHistory.push(next.balloon, {
+        sticky: this.#balloon.policy === 'sticky',
+        ...(eventId !== undefined ? { eventId } : {}),
+      });
     }
+    this.#deps.emit(next);
+  }
+
+  /**
+   * Seed the machine with a balloon from a previous run (e.g. a sticky response
+   * that should survive a bridge restart). Used once at startup, before the first
+   * `apply()` call. Emits the state so late-connecting clients see it.
+   */
+  restoreBalloon(text: string): void {
+    this.#balloon = { text, policy: 'sticky' };
+    const next: ResolvedState = { emotion: BACKGROUND_MOOD_EMOTION, decorators: [], leds: [], balloon: text };
+    this.#current = next;
     this.#deps.emit(next);
   }
 }

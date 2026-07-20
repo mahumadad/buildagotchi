@@ -220,6 +220,14 @@ async function main(): Promise<void> {
     personality,
   );
 
+  // Restore a sticky balloon from a previous run so the face doesn't go blank
+  // on restart. Must happen before the AttentionManager starts, because the
+  // first `apply(null)` -> backgroundMood decision will inherit it.
+  const lastSticky = balloonHistory.lastSticky();
+  if (lastSticky) {
+    stateMachine.restoreBalloon(lastSticky.text);
+  }
+
   const claudeAdapter = new ClaudeAdapter(
     {
       staleSessionTimeoutMs: config.claude.staleSessionTimeout,

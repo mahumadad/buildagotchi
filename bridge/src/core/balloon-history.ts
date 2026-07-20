@@ -12,6 +12,7 @@
 export interface BalloonEntry {
   ts: number;
   text: string;
+  sticky: boolean;
   eventId?: string;
 }
 
@@ -32,13 +33,13 @@ export class BalloonHistory {
   /** Push a new balloon. No-op if `text` is empty (the empty balloon isn't
    *  worth remembering — the screen was cleared, not showing something) or if
    *  it's identical to the most recent entry (spec §6.1). */
-  push(text: string, eventId?: string): void {
+  push(text: string, opts: { sticky?: boolean; eventId?: string } = {}): void {
     if (this.#capacity === 0) return;
     if (text === '') return;
     const last = this.#buffer[this.#buffer.length - 1];
     if (last?.text === text) return;
-    const entry: BalloonEntry = { ts: this.#now(), text };
-    if (eventId !== undefined) entry.eventId = eventId;
+    const entry: BalloonEntry = { ts: this.#now(), text, sticky: opts.sticky ?? false };
+    if (opts.eventId !== undefined) entry.eventId = opts.eventId;
     this.#buffer.push(entry);
     if (this.#buffer.length > this.#capacity) {
       this.#buffer.shift();
@@ -49,5 +50,14 @@ export class BalloonHistory {
    *  internal buffer. */
   recent(): readonly BalloonEntry[] {
     return [...this.#buffer].reverse();
+  }
+
+  /** Most recent sticky balloon, or null if the last one was transient/cleared. */
+  lastSticky(): BalloonEntry | null {
+    for (let i = this.#buffer.length - 1; i >= 0; i--) {
+      const entry = this.#buffer[i];
+      if (entry?.sticky) return entry;
+    }
+    return null;
   }
 }
