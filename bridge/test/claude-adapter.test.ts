@@ -743,6 +743,160 @@ describe('ClaudeAdapter', () => {
   });
 });
 
+describe('ClaudeAdapter AskUserQuestion (read-only Part 2)', () => {
+  let stateDir: string;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), 'claude-question-test-'));
+  });
+
+  afterEach(async () => {
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  function makeQuestionHook() {
+    return {
+      hook_event_name: 'PreToolUse',
+      session_id: 's1',
+      cwd: '/tmp/p',
+      tool_name: 'AskUserQuestion',
+      tool_input: {
+        questions: [
+          {
+            header: 'Model selection',
+            question: 'Which model do you want?',
+            options: [
+              { label: 'Claude 3.5 Sonnet', description: 'A very long description that should definitely be truncated to eighty characters maximum length' },
+              { label: 'Claude 3 Opus', description: 'Most capable' },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  it('PreToolUse AskUserQuestion emits a question event and stores pendingQuestion', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent(makeQuestionHook());
+
+    expect(bus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'claude',
+        category: 'question',
+        severity: 'medium',
+        payload: expect.objectContaining({
+          header: 'Model selection',
+          questions: expect.arrayContaining([
+            expect.objectContaining({
+              question: 'Which model do you want?',
+              options: expect.arrayContaining([
+                expect.objectContaining({ label: 'Claude 3.5 Sonnet' }),
+              ]),
+            }),
+          ]),
+        }),
+      }),
+    );
+
+    const session = adapter.sessions().get('s1');
+    expect(session?.pendingQuestion).toBeDefined();
+    expect(session?.pendingQuestion?.header).toBe('Model selection');
+    expect(session?.pendingQuestion?.questions[0]?.options).toHaveLength(2);
+    await adapter.stop();
+  });
+
+  it('truncates long option descriptions and does not retain raw tool_input', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent(makeQuestionHook());
+
+    const session = adapter.sessions().get('s1');
+    const stored = JSON.stringify(session);
+    // The long description must be truncated so the raw input never leaks to SSE.
+    const firstOption = session?.pendingQuestion?.questions[0]?.options[0];
+    expect(firstOption?.description?.length).toBeLessThanOrEqual(80);
+    expect(stored).not.toContain('A very long description that should definitely be truncated to eighty characters maximum length');
+    await adapter.stop();
+  });
+
+  it('PostToolUse AskUserQuestion emits question_resolved with the answer', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent(makeQuestionHook());
+    const eventId = adapter.sessions().get('s1')?.pendingQuestion?.eventId;
+
+    adapter.handleHookEvent({
+      hook_event_name: 'PostToolUse',
+      session_id: 's1',
+      tool_name: 'AskUserQuestion',
+      tool_response: { answers: ['Claude 3.5 Sonnet'] },
+    });
+
+    expect(adapter.sessions().get('s1')?.pendingQuestion).toBeUndefined();
+    expect(bus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'claude',
+        category: 'question_resolved',
+        severity: 'ambient',
+        payload: expect.objectContaining({
+          answer: 'Claude 3.5 Sonnet',
+          resolvesEventId: eventId,
+        }),
+      }),
+    );
+    await adapter.stop();
+  });
+
+  it('UserPromptSubmit auto-resolves a pending question (answered in terminal)', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent(makeQuestionHook());
+    expect(adapter.sessions().get('s1')?.pendingQuestion).toBeDefined();
+
+    adapter.handleHookEvent({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 's1',
+      cwd: '/tmp/p',
+      prompt: 'next question',
+    });
+
+    expect(adapter.sessions().get('s1')?.pendingQuestion).toBeUndefined();
+    expect(bus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'claude',
+        category: 'question_resolved',
+        severity: 'ambient',
+      }),
+    );
+    await adapter.stop();
+  });
+
+  it('Stop auto-resolves a pending question', async () => {
+    const bus = makeBus();
+    const adapter = new ClaudeAdapter(makeConfig(), makeDeps(stateDir));
+    await adapter.start(bus);
+
+    adapter.handleHookEvent(makeQuestionHook());
+    adapter.handleHookEvent({
+      hook_event_name: 'Stop',
+      session_id: 's1',
+      last_assistant_message: 'ok',
+    });
+
+    expect(adapter.sessions().get('s1')?.pendingQuestion).toBeUndefined();
+    await adapter.stop();
+  });
+});
+
 describe('ClaudeAdapter.sessionCounts', () => {
   let stateDir: string;
   beforeEach(() => {

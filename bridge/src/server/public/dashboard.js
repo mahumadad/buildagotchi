@@ -143,6 +143,13 @@ function firstPendingSession() {
   return null;
 }
 
+function firstPendingQuestion() {
+  for (const [id, s] of Object.entries(currentSessions)) {
+    if (s.pendingQuestion) return { id, session: s };
+  }
+  return null;
+}
+
 function updateButtonStates() {
   const pending = firstPendingSession();
   const btnA = document.querySelector('[data-btn="A"]');
@@ -381,6 +388,21 @@ function renderSessions(sessions) {
       const instruction = session.pendingPermission.isCritical ? ' · double-tap head to approve' : '';
       perm.textContent = `${marker}${truncate(detail, 120)}${instruction}`;
       card.appendChild(perm);
+    } else if (session.pendingQuestion) {
+      const q = document.createElement('div');
+      q.className = 'session-question';
+      const header = session.pendingQuestion.header ?? 'Question';
+      const first = session.pendingQuestion.questions?.[0];
+      const questionText = first?.question ?? '';
+      const options = first?.options?.map((o) => o.label).join(' / ') ?? '';
+      q.textContent = `${truncate(header, 60)}${questionText ? ' · ' + truncate(questionText, 80) : ''}`;
+      if (options) {
+        const opts = document.createElement('div');
+        opts.className = 'session-question-options';
+        opts.textContent = `options: ${truncate(options, 120)}`;
+        q.appendChild(opts);
+      }
+      card.appendChild(q);
     } else if (session.lastResponse) {
       // Response only — the name already carries the latest prompt.
       const info = document.createElement('div');
@@ -400,6 +422,12 @@ function renderSessions(sessions) {
       denyBtn.addEventListener('click', () => sendApproval(sessionId, 'deny'));
       actions.appendChild(approveBtn);
       actions.appendChild(denyBtn);
+    } else if (session.pendingQuestion) {
+      const focusBtn = document.createElement('button');
+      focusBtn.textContent = 'Go to terminal';
+      focusBtn.title = 'Answer in Claude Code';
+      focusBtn.addEventListener('click', () => sendFocus(sessionId));
+      actions.appendChild(focusBtn);
     } else {
       const fakePerm = document.createElement('button');
       fakePerm.textContent = 'Fake perm';
@@ -507,6 +535,11 @@ async function sendApproval(sessionId, action) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ action }),
   });
+}
+
+async function sendFocus(sessionId) {
+  sound.play('notification');
+  await fetch(`/focus/${sessionId}`, { method: 'POST' });
 }
 
 async function loadInitial() {

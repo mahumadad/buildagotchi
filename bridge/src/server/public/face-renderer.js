@@ -241,6 +241,21 @@ function createAngryMarkDecorator(x, y, w = 40, h = 40) {
   };
 }
 
+function createQuestionMarkDecorator(x, y, w = 40, h = 40) {
+  const xs = w / 40;
+  const ys = h / 40;
+  return (ctx, _face) => {
+    ctx.save();
+    ctx.fillStyle = '#3b82f6';
+    ctx.font = `bold ${Math.round(30 * Math.min(xs, ys))}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.translate(x + 20 * xs, y + 20 * ys);
+    ctx.fillText('?', 0, 0);
+    ctx.restore();
+  };
+}
+
 function createSweatDecorator(x, y, w = 40, h = 40) {
   const interval = 3000;
   const xs = w / 40;
@@ -404,6 +419,7 @@ const DECORATOR_MAP = {
   hot_steam: (f) => createHotSteamDecorator(f.w / 2 - 15, 55),
   // Cerca de la boca, a la derecha: visible sin tapar ni ojos ni burbuja.
   thinking: (f) => createThinkingDecorator(f.w - 110, f.h - 70),
+  question_mark: (f) => createQuestionMarkDecorator(f.w - 55, 10),
 };
 
 const EMOTION_DECORATORS = {

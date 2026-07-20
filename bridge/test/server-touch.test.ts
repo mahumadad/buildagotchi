@@ -86,6 +86,30 @@ function makeClaudeAdapterWithPendingPermission(isCritical = false) {
   } as unknown as ClaudeAdapter;
 }
 
+function makeClaudeAdapterWithPendingQuestion() {
+  const sessions = new Map<string, Record<string, unknown>>([
+    [
+      's1',
+      {
+        sessionId: 's1',
+        cwd: '/tmp/p',
+        state: 'working',
+        lastEventAt: Date.now(),
+        pendingQuestion: { eventId: 'q1', header: 'Model', questions: [] },
+      },
+    ],
+  ]);
+  return {
+    sessions: vi.fn(() => sessions),
+    resolvePermission: vi.fn(() => null),
+    onSessionChangeCallback: null,
+    health: () => ({ status: 'HEALTHY' }),
+    name: 'claude',
+    start: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn().mockResolvedValue(undefined),
+  } as unknown as ClaudeAdapter;
+}
+
 describe('BridgeServer touch gestures', () => {
   let dir: string;
   let recorder: EventRecorder;
@@ -208,5 +232,16 @@ describe('BridgeServer touch gestures', () => {
     expect(attentionManager.snapshot().mode).not.toBe('SLEEP');
     vi.advanceTimersByTime(2_000);
     expect(attentionManager.snapshot().mode).toBe('SLEEP');
+  });
+
+  it('a head tap with a pending question focuses the terminal and consumes the tap', () => {
+    const claudeAdapter = makeClaudeAdapterWithPendingQuestion();
+    const { server } = makeServer(claudeAdapter);
+    tapHead(server);
+    // No permission to resolve, so the tap should be consumed by focusTerminal.
+    // The exact focus is platform-specific and not asserted; the key invariant is
+    // that no generic touch_head event is published.
+    expect(published.some((e) => e.category === 'touch_head')).toBe(false);
+    expect(published.some((e) => e.category === 'head_pet')).toBe(false);
   });
 });

@@ -12,6 +12,8 @@ templates:
   permission: ""
   permission_critical: ""
   permission_resolved: ""
+  question: ""
+  question_resolved: ""
   response: ""
   prompt: ""
   subagent: ""

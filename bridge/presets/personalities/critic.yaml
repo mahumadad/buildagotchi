@@ -11,6 +11,8 @@ templates:
   permission: "¿Estás seguro?"
   permission_critical: "Eso parece peligroso: {command}"
   permission_resolved: ""
+  question: "¿{header}?"
+  question_resolved: ""
   response: "{text}"
   error: "Te lo dije: {message}"
 

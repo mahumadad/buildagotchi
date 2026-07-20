@@ -123,6 +123,25 @@ stateRules:
       sound: approve
       balloon: ""  # explicit clear for the "resolved" flash
 
+  # ── Preguntas de opción múltiple (AskUserQuestion) ─────────────────────────
+  # El bridge no puede responderlas; solo las muestra y, cuando el usuario elige
+  # en el terminal, retira el balloon vía question_resolved.
+  - match: { source: claude, category: question }
+    state:
+      emotion: DOUBTFUL
+      decorators: [question_mark]
+      leds: [{ row: right, color: amber, pattern: blink }]
+      sound: notification
+      balloon: "{project}: {header}"
+
+  - match: { source: claude, category: question_resolved }
+    state:
+      emotion: HAPPY
+      decorators: [heart]
+      leds: [{ row: right, color: green, pattern: solid }]
+      sound: approve
+      balloon: ""  # clear the question balloon
+
   # ── Presión de contexto ──────────────────────────────────────────────────
   # La ventana se declara en `claude.contextWindowTokens`. `calm` llega cuando
   # la sesión compacta: retira al evento anterior con `resolvesEventId` y limpia.

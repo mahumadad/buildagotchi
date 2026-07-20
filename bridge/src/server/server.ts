@@ -333,6 +333,9 @@ export class BridgeServer {
     if (method === 'POST' && path.startsWith('/approve/')) {
       return this.#handleApprove(req, res, path);
     }
+    if (method === 'POST' && path.startsWith('/focus/')) {
+      return this.#handleFocus(req, res, path);
+    }
     if (method === 'POST' && path === '/sim/mode') return this.#handleSimMode(res);
     if (method === 'POST' && path === '/sim/emotion') return this.#handleSimEmotion(req, res);
     if (method === 'POST' && path === '/sim/button') return this.#handleSimButton(req, res);
@@ -658,6 +661,30 @@ export class BridgeServer {
     }
   }
 
+  async #handleFocus(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    const authError = this.#checkAuth(req);
+    if (authError && !this.#opts.simulate) {
+      sendJson(res, authError.status, authError.body);
+      return;
+    }
+    if (!this.#opts.claudeAdapter) {
+      sendJson(res, 404, { error: 'claude adapter not configured' });
+      return;
+    }
+    const sessionId = path.slice('/focus/'.length);
+    if (!sessionId) {
+      sendJson(res, 400, { error: 'missing session ID' });
+      return;
+    }
+    const session = this.#opts.claudeAdapter.sessions().get(sessionId);
+    if (!session?.cwd) {
+      sendJson(res, 404, { error: 'session not found' });
+      return;
+    }
+    focusTerminal(session.cwd, this.#opts.logger);
+    sendJson(res, 200, { focused: true, cwd: session.cwd });
+  }
+
   /**
    * Real input coming off the firmware over BLE (`ProtocolSession.onInboundEvent`).
    * Deliberately the same semantics as the `/sim/*` endpoints below: button C
@@ -719,6 +746,9 @@ export class BridgeServer {
       if (duration <= this.#TAP_MS) {
         const result = this.#resolveHeadTap();
         if (result.consumed) return;
+        // No permission pending: a head tap nudges the user to the terminal if
+        // there's an unanswered AskUserQuestion (Part 2 of decisiones interactivas).
+        if (this.#focusPendingQuestion()) return;
       }
       return;
     }
@@ -923,6 +953,22 @@ export class BridgeServer {
       }
     }
     return { approved: false, consumed: false };
+  }
+
+  /**
+   * If any session has a pending AskUserQuestion, focus its terminal so the user
+   * can answer in Claude Code. Consumes the head tap so it doesn't also publish a
+   * generic touch_head event. Used when no permission is pending.
+   */
+  #focusPendingQuestion(): boolean {
+    if (!this.#opts.claudeAdapter) return false;
+    for (const [, session] of this.#opts.claudeAdapter.sessions()) {
+      if (session.pendingQuestion) {
+        focusTerminal(session.cwd, this.#opts.logger);
+        return true;
+      }
+    }
+    return false;
   }
 
   async #handleSimPermission(req: IncomingMessage, res: ServerResponse): Promise<void> {

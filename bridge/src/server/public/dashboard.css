@@ -436,6 +436,22 @@ body {
   word-break: break-word;
 }
 
+.session-question {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--sev-medium);
+  padding: 0.3rem 0.5rem;
+  background: rgba(245, 158, 11, 0.08);
+  border-radius: 0.3rem;
+  word-break: break-word;
+}
+
+.session-question-options {
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-top: 0.25rem;
+}
+
 .session-info {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.75rem;

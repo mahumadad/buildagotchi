@@ -16,6 +16,8 @@ templates:
   permission: "{project}: {command}"
   permission_critical: "{project}: ⚠ {command}"
   permission_resolved: ""
+  question: "{project}: {header}"
+  question_resolved: ""
   response: "[{project}] {text}"
   error: "✕ {message}"
   session.idle: "{project}: idle"

@@ -9,6 +9,8 @@ templates:
   permission: "Autorización requerida"
   permission_critical: "⚠ {command}"
   permission_resolved: ""
+  question: "Pregunta: {header}"
+  question_resolved: ""
   response: "Respuesta lista"
   error: "Error: {message}"
 

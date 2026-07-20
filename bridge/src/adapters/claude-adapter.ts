@@ -31,6 +31,8 @@ export const CLAUDE_CATEGORIES = [
   'permission',
   'permission_critical',
   'permission_resolved',
+  'question',
+  'question_resolved',
   'notification',
   'subagent',
 ] as const;
@@ -45,6 +47,16 @@ export const CLAUDE_CATEGORIES = [
 export const CLAUDE_CRITICAL_CATEGORIES = ['permission', 'permission_critical'] as const;
 
 export type ClaudeCategory = (typeof CLAUDE_CATEGORIES)[number];
+
+export interface ClaudeQuestion {
+  eventId: string;
+  header?: string | undefined;
+  questions: Array<{
+    question: string;
+    header?: string | undefined;
+    options: Array<{ label: string; description?: string | undefined }>;
+  }>;
+}
 
 export interface ClaudeSession {
   sessionId: string;
@@ -87,6 +99,11 @@ export interface ClaudeSession {
         summary?: string;
       }
     | undefined;
+  /**
+   * A pending `AskUserQuestion` visible to the user. Read-only: the bridge
+   * cannot answer it, only display it and nudge the user to the terminal.
+   */
+  pendingQuestion?: ClaudeQuestion | undefined;
   /** Summary of the last PreToolUse seen for this session, used to enrich the
    *  next permission prompt; overwritten on every tool call. Only the derived
    *  summary/command are kept — the raw tool_input (which the whole session is
@@ -215,6 +232,7 @@ export class ClaudeAdapter implements Adapter {
         // instead of the dashboard, we never got a resolve — clear it now so the
         // card and balloon stop showing a stale pending state.
         this.#autoResolvePending(session, 'external');
+        this.#autoResolveQuestion(session, 'external');
         session.state = 'working';
         const prompt = typeof payload.prompt === 'string' ? payload.prompt : undefined;
         if (prompt !== undefined) {
@@ -236,6 +254,7 @@ export class ClaudeAdapter implements Adapter {
 
       case 'Stop': {
         this.#autoResolvePending(session, 'external');
+        this.#autoResolveQuestion(session, 'external');
         // The Stop payload carries the final text as `last_assistant_message`; only
         // dip into the transcript for the token count, which the payload lacks.
         const enrichment = this.#readTranscript(payload);
@@ -275,9 +294,17 @@ export class ClaudeAdapter implements Adapter {
       }
 
       case 'PostToolUse': {
-        // PostToolUse fires after Claude Code runs a tool the user approved.
-        // If we had a pending permission on this session, that's how it was resolved.
-        this.#autoResolvePending(session, 'approved');
+        const postToolName = typeof payload.tool_name === 'string' ? payload.tool_name : undefined;
+        if (postToolName === 'AskUserQuestion') {
+          // The user answered the question in the terminal. Relay the resolution
+          // so the dashboard card and robot balloon retire.
+          const answer = this.#extractQuestionAnswer(payload.tool_response);
+          this.#autoResolveQuestion(session, 'answered', answer);
+        } else {
+          // PostToolUse fires after Claude Code runs a tool the user approved.
+          // If we had a pending permission on this session, that's how it was resolved.
+          this.#autoResolvePending(session, 'approved');
+        }
         break;
       }
 
@@ -287,7 +314,24 @@ export class ClaudeAdapter implements Adapter {
           payload.tool_input && typeof payload.tool_input === 'object'
             ? (payload.tool_input as Record<string, unknown>)
             : undefined;
-        if (toolName) {
+        if (toolName === 'AskUserQuestion' && toolInput) {
+          // Read-only Part 2 of decisiones interactivas: the bridge cannot answer
+          // AskUserQuestion, but it can display the question and options.
+          const parsed = this.#parseQuestionToolInput(toolInput);
+          if (parsed) {
+            const eventId = this.#emit('question', 'medium', {
+              sessionId,
+              cwd: session.cwd,
+              ...(parsed.header !== undefined ? { header: parsed.header } : {}),
+              questions: parsed.questions,
+            });
+            session.pendingQuestion = {
+              eventId,
+              header: parsed.header,
+              questions: parsed.questions,
+            };
+          }
+        } else if (toolName) {
           // Summarize now and discard the raw input — it must not linger on the
           // session, which is serialized wholesale to the dashboard SSE.
           const { command, summary } = summarizeToolUse(toolName, toolInput ?? {});
@@ -438,6 +482,88 @@ export class ClaudeAdapter implements Adapter {
       // reaches it through this field.
       resolvesEventId: pending.eventId,
     });
+  }
+
+  /**
+   * Clears a pending question when the user answers it in the terminal (PostToolUse)
+   * or abandons it (UserPromptSubmit / Stop / SessionEnd). The bridge cannot answer
+   * `AskUserQuestion` itself; it only relays the resolution so the balloon/ dashboard
+   * card disappears.
+   */
+  #autoResolveQuestion(
+    session: ClaudeSession,
+    source: 'answered' | 'external' | 'abandoned',
+    answer?: string,
+  ): void {
+    const pending = session.pendingQuestion;
+    if (!pending) return;
+    session.pendingQuestion = undefined;
+    const payload: Record<string, unknown> = {
+      sessionId: session.sessionId,
+      cwd: session.cwd,
+      action: source,
+      resolvesEventId: pending.eventId,
+    };
+    if (answer !== undefined) payload.answer = answer;
+    this.#emit('question_resolved', 'ambient', payload);
+  }
+
+  /**
+   * Parses the `tool_input` of an `AskUserQuestion` PreToolUse hook. Returns the
+   * questions and options in a shape safe to serialize to the dashboard and robot.
+   * Descriptions are truncated to 80 chars so the raw input never leaks to the UI.
+   */
+  #parseQuestionToolInput(
+    toolInput: Record<string, unknown>,
+  ): { header?: string | undefined; questions: ClaudeQuestion['questions'] } | null {
+    const rawQuestions = toolInput.questions;
+    if (!Array.isArray(rawQuestions) || rawQuestions.length === 0) return null;
+
+    const questions: ClaudeQuestion['questions'] = [];
+    for (const raw of rawQuestions) {
+      if (typeof raw !== 'object' || raw === null) continue;
+      const q = raw as Record<string, unknown>;
+      const questionText = typeof q.question === 'string' ? q.question : '';
+      const headerText = typeof q.header === 'string' ? q.header : undefined;
+      const rawOptions = Array.isArray(q.options) ? q.options : [];
+      const options: Array<{ label: string; description?: string }> = [];
+      for (const rawOpt of rawOptions) {
+        if (typeof rawOpt !== 'object' || rawOpt === null) continue;
+        const opt = rawOpt as Record<string, unknown>;
+        const label = typeof opt.label === 'string' ? opt.label : '';
+        let description: string | undefined;
+        if (typeof opt.description === 'string') {
+          description =
+            opt.description.length > 80 ? `${opt.description.slice(0, 79)}…` : opt.description;
+        }
+        options.push({ label, ...(description !== undefined ? { description } : {}) });
+      }
+      questions.push({
+        question: questionText,
+        ...(headerText !== undefined ? { header: headerText } : {}),
+        options,
+      });
+    }
+    if (questions.length === 0) return null;
+    return { header: questions[0]?.header, questions };
+  }
+
+  /**
+   * Extracts the chosen answer from an `AskUserQuestion` PostToolUse `tool_response`.
+   * The exact shape depends on the tool implementation; this is defensive against
+   * string / {answers: [...]} / {answer: ...} variants.
+   */
+  #extractQuestionAnswer(toolResponse: unknown): string | undefined {
+    if (typeof toolResponse === 'string') return toolResponse;
+    if (typeof toolResponse === 'object' && toolResponse !== null) {
+      const tr = toolResponse as Record<string, unknown>;
+      if (Array.isArray(tr.answers) && tr.answers.length > 0) {
+        const first = tr.answers[0];
+        return typeof first === 'string' ? first : undefined;
+      }
+      if (typeof tr.answer === 'string') return tr.answer;
+    }
+    return undefined;
   }
 
   /** Publishes to the bus and returns the event id, so callers can hand it to a
@@ -597,6 +723,7 @@ export class ClaudeAdapter implements Adapter {
    */
   #retireSession(session: ClaudeSession): void {
     this.#autoResolvePending(session, 'abandoned');
+    this.#autoResolveQuestion(session, 'abandoned');
     this.#sessions.delete(session.sessionId);
   }
 

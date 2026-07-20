@@ -767,7 +767,52 @@ alineación del vocabulario táctil de la cabeza entre el bridge y el firmware.
 
 ### Commits
 
-- (a commitar) — Align head-touch vocabulary with firmware (`press`/`release`)
+- `5956ca4` — Align head-touch vocabulary with firmware (`press`/`release`)
+
+---
+
+## 2026-07-20 (noche) — AskUserQuestion visible (Parte 2 de decisiones interactivas)
+
+### Qué se hizo
+
+Implementación de la **Parte 2** del spec de decisiones interactivas: hacer
+visibles las preguntas de opción múltiple de Claude Code sin intentar responderlas
+desde el robot (el bridge no puede responder `AskUserQuestion` en modo monitor).
+
+- **`claude-adapter.ts`**: el `PreToolUse` de `AskUserQuestion` emite un evento
+  `question` de severidad `medium` con `header`, `questions[]` y opciones (con
+  descripciones truncadas a 80 chars). El `PostToolUse` de `AskUserQuestion`
+  emite `question_resolved` con `resolvesEventId` y la respuesta elegida. `UserPromptSubmit`
+  y `Stop` auto-resuelven la pregunta si sigue pendiente (el usuario contestó en
+  el terminal). Se añadieron `question` y `question_resolved` a `CLAUDE_CATEGORIES`.
+- **`server.ts`**: un tap en la cabeza con pregunta pendiente (y sin permiso
+  pendiente) dispara `focusTerminal` hacia esa sesión. Nuevo endpoint
+  `POST /focus/:sessionId` para el botón "Go to terminal" del dashboard.
+- **`config.example.yaml` + `config.yaml`**: state rules para `question`
+  (DOUBTFUL + `question_mark`) y `question_resolved` (HAPPY + clear balloon).
+- **`face-renderer.js`**: nuevo decorator `question_mark` que dibuja una `?` azul.
+- **`dashboard.js` + `dashboard.css`**: las tarjetas de sesión muestran la
+  pregunta, las opciones y un botón "Go to terminal" cuando hay `pendingQuestion`.
+- **Presets**: se añadieron templates `question`/`question_resolved` para todos
+  los presets para mantener el contrato M13.
+- **Tests**: `claude-adapter.test.ts` (5 tests), `question-resolve-chain.test.ts`
+  (2 tests integración con AM), y `server-touch.test.ts` (tap con pregunta pendiente).
+
+### Decisiones y deuda
+
+- **No se implementó la Parte 1** (relay real de `PermissionRequest`): sigue
+  bloqueada por el modo `bypassPermissions` de las sesiones actuales y porque
+  requiere un hook que espere la respuesta del usuario. No se difirió más, se
+  deja como trabajo futuro explícito.
+- **No se añade sonido nuevo**: `question` reutiliza `notification` (ya está en el
+  firmware) y `question_resolved` reutiliza `approve`. Nada que el robot no pueda
+  reproducir.
+- **D-15 (métrica de velocidad)**: `PermissionRequest` trae `pendingPromptAt`, pero
+  como la Parte 1 sigue sin implementar, D-15 sigue diferida.
+
+### Commits
+
+- `19c5d97` — Make AskUserQuestion visible (read-only Part 2)
 
 ---
 
@@ -782,7 +827,9 @@ alineación del vocabulario táctil de la cabeza entre el bridge y el firmware.
 - [ ] Fase 1B: BLE real con noble + CoreS3
 - [ ] Gate 1: 3 semanas de uso real del MVP (criterios en ROADMAP.md)
 
-[DEBT.md](DEBT.md) queda con **una sola entrada abierta**, D-03, y no es un bug:
-es la decisión de qué hacer con `pulse` en Fase 1B. Las cinco restantes están en
-"Resueltas" con su lección.
+[DEBT.md](DEBT.md) queda con varias entradas abiertas: D-03 (decisión pendiente
+sobre `pulse`), D-10 (medición de latencia del firmware), D-12 (trust-check), D-13
+(verificación real del vocabulario táctil), D-15 (métrica de velocidad), D-16
+(balloon del emulador vs firmware), D-17 (`pet`/idle sin hardware) y D-18
+(caricia perdida cuando el AM está ocupado).
 
