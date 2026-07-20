@@ -95,13 +95,15 @@ stateRules:
   # Destructive command → red-blink LED, angry_mark decorator. balloonPolicy is
   # transient by default; the balloon dies with the event (S2.5.2). This is
   # what closes the ghost-balloon bug the council reproduced.
+  # El sonido es `error`, no `permission`: un comando destructivo debe sonar
+  # distinto a un permiso cualquiera, o el oído no lo distingue (D6).
   - match: { source: claude, category: permission_critical }
     state:
       emotion: DOUBTFUL
       decorators: [angry_mark]
       servo: { pitch: 10 }
       leds: [{ row: left, color: red, pattern: blink }]
-      sound: permission
+      sound: error
       balloon: "{project}: ⚠ {command}"
 
   - match: { source: claude, category: permission }

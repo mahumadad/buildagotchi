@@ -104,7 +104,10 @@ describe('M13 integration', () => {
       return sm2.current().sound;
     };
     expect(soundOf('permission', 'critical')).toBe('permission');
-    expect(soundOf('permission_critical', 'critical')).toBe('permission');
+    // D6: un comando destructivo NO puede sonar como un permiso normal — el
+    // oído debe distinguir la alarma antes de mirar la pantalla.
+    expect(soundOf('permission_critical', 'critical')).toBe('error');
+    expect(soundOf('permission_critical', 'critical')).not.toBe(soundOf('permission', 'critical'));
     expect(soundOf('response', 'ambient')).toBe('notification');
     // `notification` category is silent in the config (Calm Tech: an in-app
     // notification shouldn't chime; the LED speaks for it). Documented here.
