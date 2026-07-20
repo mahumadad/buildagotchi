@@ -10,7 +10,7 @@ import { StateMachine } from '../src/core/state-machine.js';
 import type { Platform } from '../src/platform/platform.js';
 import { EventRecorder } from '../src/recorder/recorder.js';
 import { Metrics } from '../src/server/metrics.js';
-import { BridgeServer } from '../src/server/server.js';
+import { BridgeServer, type BridgeServerOptions } from '../src/server/server.js';
 
 /**
  * Harness copied from server-dashboard.test.ts / integration-fase2.test.ts:
@@ -93,7 +93,12 @@ describe('BridgeServer touch gestures', () => {
   let published: Event[];
   let server: BridgeServer;
 
-  function makeServer(claudeAdapter?: ClaudeAdapter): BridgeServer {
+  function makeServer(claudeAdapter?: ClaudeAdapter): {
+    server: BridgeServer;
+    attentionManager: AttentionManager;
+    bus: EventBus;
+    published: Event[];
+  } {
     dir = mkdtempSync(join(tmpdir(), 'bridge-touch-test-'));
     recorder = new EventRecorder({ dir, retentionDays: 30 });
     published = [];
@@ -101,8 +106,9 @@ describe('BridgeServer touch gestures', () => {
       { windowMs: 60_000, autoMuteAfter: 10 },
       { onAccepted: (e) => published.push(e) },
     );
+    const attentionManager = makeAm();
 
-    server = new BridgeServer({
+    const options: BridgeServerOptions = {
       host: '127.0.0.1',
       port: 0,
       rateLimitPerMinute: 60,
@@ -113,15 +119,18 @@ describe('BridgeServer touch gestures', () => {
       platform: makePlatform(),
       bus,
       recorder,
-      attentionManager: makeAm(),
+      attentionManager,
       stateMachine: makeStateMachine(),
-      claudeAdapter,
       getHealth: () => ({
         adapters: {},
         transport: { kind: 'sim', connected: true, reconnects: 0, latency: { p50: 0, p95: 0 } },
       }),
-    });
-    return server;
+    };
+    if (claudeAdapter) {
+      options.claudeAdapter = claudeAdapter;
+    }
+    server = new BridgeServer(options);
+    return { server, attentionManager, bus, published };
   }
 
   beforeEach(() => {
@@ -134,7 +143,7 @@ describe('BridgeServer touch gestures', () => {
   });
 
   it('a pet gesture publishes a head_pet event, not touch_head', () => {
-    const server = makeServer();
+    const { server } = makeServer();
     server.handleDeviceInput('touch', { gesture: 'pet' });
     const evt = published.find((e) => e.category === 'head_pet');
     expect(evt).toBeDefined();
@@ -145,33 +154,40 @@ describe('BridgeServer touch gestures', () => {
 
   it('a pet gesture never approves a pending permission', () => {
     const claudeAdapter = makeClaudeAdapterWithPendingPermission();
-    const server = makeServer(claudeAdapter);
+    const { server } = makeServer(claudeAdapter);
     server.handleDeviceInput('touch', { gesture: 'pet' });
     expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
   });
 
+  function tapHead(server: BridgeServer) {
+    server.handleDeviceInput('touch', { gesture: 'press' });
+    vi.advanceTimersByTime(50);
+    server.handleDeviceInput('touch', { gesture: 'release' });
+  }
+
   it('a single head tap approves a non-critical pending permission', () => {
     const claudeAdapter = makeClaudeAdapterWithPendingPermission(false);
     claudeAdapter.resolvePermission = vi.fn(() => 'e1');
-    const server = makeServer(claudeAdapter);
-    server.handleDeviceInput('touch', { gesture: 'tap' });
+    const { server } = makeServer(claudeAdapter);
+    tapHead(server);
     expect(claudeAdapter.resolvePermission).toHaveBeenCalledWith('s1', 'approved');
   });
 
   it('a single head tap on a critical permission only arms the double-tap guard', () => {
     const claudeAdapter = makeClaudeAdapterWithPendingPermission(true);
     claudeAdapter.resolvePermission = vi.fn(() => 'e1');
-    const server = makeServer(claudeAdapter);
-    server.handleDeviceInput('touch', { gesture: 'tap' });
+    const { server } = makeServer(claudeAdapter);
+    tapHead(server);
     expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
   });
 
   it('two head taps within the window approve a critical permission', () => {
     const claudeAdapter = makeClaudeAdapterWithPendingPermission(true);
     claudeAdapter.resolvePermission = vi.fn(() => 'e1');
-    const server = makeServer(claudeAdapter);
-    server.handleDeviceInput('touch', { gesture: 'tap' });
-    server.handleDeviceInput('touch', { gesture: 'tap' });
+    const { server } = makeServer(claudeAdapter);
+    tapHead(server);
+    vi.advanceTimersByTime(100); // within the 700ms window
+    tapHead(server);
     expect(claudeAdapter.resolvePermission).toHaveBeenCalledTimes(1);
     expect(claudeAdapter.resolvePermission).toHaveBeenCalledWith('s1', 'approved');
   });
@@ -179,10 +195,18 @@ describe('BridgeServer touch gestures', () => {
   it('two slow head taps do not approve a critical permission', () => {
     const claudeAdapter = makeClaudeAdapterWithPendingPermission(true);
     claudeAdapter.resolvePermission = vi.fn(() => 'e1');
-    const server = makeServer(claudeAdapter);
-    server.handleDeviceInput('touch', { gesture: 'tap' });
+    const { server } = makeServer(claudeAdapter);
+    tapHead(server);
     vi.advanceTimersByTime(1_000); // past the 700ms window
-    server.handleDeviceInput('touch', { gesture: 'tap' });
+    tapHead(server);
     expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
+  });
+
+  it('a long press triggers SLEEP after the hold duration', () => {
+    const { server, attentionManager } = makeServer();
+    server.handleDeviceInput('touch', { gesture: 'press' });
+    expect(attentionManager.snapshot().mode).not.toBe('SLEEP');
+    vi.advanceTimersByTime(2_000);
+    expect(attentionManager.snapshot().mode).toBe('SLEEP');
   });
 });

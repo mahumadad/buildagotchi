@@ -215,6 +215,11 @@ export class BridgeServer {
   #sseKeepAlive: NodeJS.Timeout | null = null;
   #lastHeadTapAt = 0;
   #DOUBLE_TAP_WINDOW_MS = 700;
+  #headTouchState: 'idle' | 'pressed' | 'hold-fired' = 'idle';
+  #pressStartAt = 0;
+  #holdTimer: NodeJS.Timeout | null = null;
+  #TAP_MS = 300;
+  #HOLD_MS = 2000;
 
   constructor(opts: BridgeServerOptions) {
     this.#opts = opts;
@@ -656,8 +661,10 @@ export class BridgeServer {
   /**
    * Real input coming off the firmware over BLE (`ProtocolSession.onInboundEvent`).
    * Deliberately the same semantics as the `/sim/*` endpoints below: button C
-   * cycles the mode, A approves, B denies, a head tap approves, a hold sleeps.
-   * If the two ever diverge, the simulator stops being evidence about the robot.
+   * cycles the mode, A approves, B denies, a head press (tap) approves, a hold
+   * sleeps. The firmware only emits `press`, `release`, `forwardSwipe`,
+   * `backwardSwipe` and `pet`; `tap` and `hold` are derived here so the simulator
+   * and the robot stay aligned (D-13).
    */
   handleDeviceInput(kind: 'button' | 'touch', detail: unknown): void {
     if (kind === 'button') {
@@ -681,25 +688,52 @@ export class BridgeServer {
     }
 
     const gesture = (detail as { gesture?: unknown })?.gesture;
-    if (gesture === 'tap') {
-      const result = this.#resolveHeadTap();
-      if (result.consumed) return;
-    }
-    if (gesture === 'hold') {
-      this.#opts.attentionManager.setMode('SLEEP');
-      this.#opts.stateMachine.apply(this.#opts.attentionManager.snapshot().active);
-      this.notifyState();
+    if (typeof gesture !== 'string') return;
+
+    if (gesture === 'press') {
+      this.#pressStartAt = Date.now();
+      this.#headTouchState = 'pressed';
+      if (this.#holdTimer) clearTimeout(this.#holdTimer);
+      this.#holdTimer = setTimeout(() => {
+        this.#headTouchState = 'hold-fired';
+        this.#holdTimer = null;
+        this.#opts.attentionManager.setMode('SLEEP');
+        this.#opts.stateMachine.apply(this.#opts.attentionManager.snapshot().active);
+        this.notifyState();
+      }, this.#HOLD_MS);
       return;
     }
-    if (typeof gesture !== 'string') return;
-    this.#opts.bus.publish(
-      newEvent({
-        source: 'firmware',
-        category: gesture === 'pet' ? 'head_pet' : 'touch_head',
-        severity: 'low',
-        payload: { gesture },
-      }),
-    );
+
+    if (gesture === 'release') {
+      if (this.#holdTimer) {
+        clearTimeout(this.#holdTimer);
+        this.#holdTimer = null;
+      }
+      const duration = Date.now() - this.#pressStartAt;
+      if (this.#headTouchState === 'hold-fired') {
+        // The hold timer already handled the SLEEP transition; just reset.
+        this.#headTouchState = 'idle';
+        return;
+      }
+      this.#headTouchState = 'idle';
+      if (duration <= this.#TAP_MS) {
+        const result = this.#resolveHeadTap();
+        if (result.consumed) return;
+      }
+      return;
+    }
+
+    if (gesture === 'forwardSwipe' || gesture === 'backwardSwipe' || gesture === 'pet') {
+      this.#opts.bus.publish(
+        newEvent({
+          source: 'firmware',
+          category: gesture === 'pet' ? 'head_pet' : 'touch_head',
+          severity: 'low',
+          payload: { gesture },
+        }),
+      );
+      return;
+    }
   }
 
   #cycleMode(): Mode {
@@ -807,39 +841,29 @@ export class BridgeServer {
       return;
     }
     const gesture = parsed.gesture;
-    const valid = ['tap', 'swipe_fwd', 'swipe_back', 'hold', 'pet'];
+    const valid = ['press', 'release', 'forwardSwipe', 'backwardSwipe', 'pet'];
     if (typeof gesture !== 'string' || !valid.includes(gesture)) {
       sendJson(res, 400, { error: `gesture must be one of: ${valid.join(', ')}` });
       return;
     }
-    if (gesture === 'tap') {
-      const result = this.#resolveHeadTap();
-      if (result.approved) {
-        sendJson(res, 200, { gesture, action: 'approve', resolved: true, sessionId: result.sessionId });
-        return;
-      }
-      if (result.consumed) {
-        sendJson(res, 202, { gesture, status: 'pending_confirmation', message: 'double-tap required for destructive command' });
-        return;
-      }
-      sendJson(res, 404, { error: 'no pending permission' });
+
+    if (gesture === 'press' || gesture === 'release') {
+      this.handleDeviceInput('touch', { gesture });
+      sendJson(res, 202, { gesture, state: this.#headTouchState });
       return;
     }
-    if (gesture === 'hold') {
-      this.#opts.attentionManager.setMode('SLEEP');
-      this.#opts.stateMachine.apply(this.#opts.attentionManager.snapshot().active);
-      this.notifyState();
-      sendJson(res, 200, { gesture, mode: 'SLEEP' });
+
+    if (gesture === 'forwardSwipe' || gesture === 'backwardSwipe' || gesture === 'pet') {
+      const event = newEvent({
+        source: 'firmware',
+        category: gesture === 'pet' ? 'head_pet' : 'touch_head',
+        severity: 'low',
+        payload: { gesture },
+      });
+      this.#opts.bus.publish(event);
+      sendJson(res, 202, { gesture, id: event.id });
       return;
     }
-    const event = newEvent({
-      source: 'firmware',
-      category: gesture === 'pet' ? 'head_pet' : 'touch_head',
-      severity: gesture === 'hold' ? 'medium' : 'low',
-      payload: { gesture },
-    });
-    this.#opts.bus.publish(event);
-    sendJson(res, 202, { gesture, id: event.id });
   }
 
   #resolveFirstPendingPermission(action: 'approve' | 'deny', source: ResolveSource): string | null {

@@ -138,14 +138,18 @@ gestos que el bridge inventó, así que el simulador se valida a sí mismo.
 comandos destructivos —la única que protege un `sudo rm -rf`— no tiene gesto que
 la dispare. El simulador seguiría diciendo que funciona.
 
-**Fix**: alinear el vocabulario con el firmware (`press`/`release`/`forwardSwipe`/
-`backwardSwipe`), y construir el doble toque sobre `press`/`release` con `ticks`,
-en el firmware. Decidir entonces si D6 se queda con doble toque o si se escribe
-también el long-press. `swipe_fwd`/`swipe_back` hoy pasan la validación y sólo
-publican un `touch_head` genérico que nadie interpreta.
+**Fix**: la parte del bridge está hecha: `handleDeviceInput` ya consume `press`/
+`release`/`forwardSwipe`/`backwardSwipe` y deriva `tap` (hasta 300ms) y `hold`
+(2s) en el servidor. El simulador envía los mismos eventos crudos. Lo que falta
+es Fase 1B: verificar que el CoreS3 envíe `press`/`release` con la resolución
+temporal esperada, y decidir si el doble toque debe derivarse en el device en
+lugar del bridge. Si el firmware nunca envía `hold`, D6 sigue sin poder usar la
+variante "hold 2s" hasta que se implemente en el robot. `swipe_fwd`/`swipe_back`
+quedaron reemplazados por `forwardSwipe`/`backwardSwipe` y siguen publicando un
+`touch_head` genérico que nadie interpreta.
 
-**Costo**: la alineación del vocabulario, ~1 h. El doble toque, Fase 1B: no hay
-forma de verificarlo sin el sensor.
+**Costo**: la alineación del vocabulario ya está hecha (~1h). El doble toque y
+long-press en el firmware, Fase 1B: no hay forma de verificarlo sin el sensor.
 
 Es la misma clase de bug que `pulse` (D-03) y que `rainbow` (D-04, resuelto):
 escribimos contra un emulador que miente sobre el hardware. Esta vez toca la

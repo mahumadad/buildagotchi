@@ -669,10 +669,37 @@ if (servoPitchEl) servoPitchEl.addEventListener('input', onServoInput);
 
 const TOUCH_SOUNDS = { tap: 'tap', swipe_fwd: 'swipe', swipe_back: 'swipe', hold: 'hold' };
 for (const btn of document.querySelectorAll('[data-touch]')) {
-  btn.addEventListener('click', () => {
-    sound.play(TOUCH_SOUNDS[btn.dataset.touch] ?? 'tap');
-    simPost('/sim/touch', { gesture: btn.dataset.touch });
-  });
+  const touch = btn.dataset.touch;
+  if (touch === 'tap') {
+    btn.addEventListener('click', () => {
+      sound.play('tap');
+      // Firmware alignment: the robot emits press/release, not tap (D-13).
+      simPost('/sim/touch', { gesture: 'press' });
+      setTimeout(() => simPost('/sim/touch', { gesture: 'release' }), 50);
+    });
+  } else if (touch === 'hold') {
+    // Hold is a press that lasts until the pointer leaves or lifts; the server
+    // derives the hold action from the duration.
+    btn.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      btn.setPointerCapture(ev.pointerId);
+      sound.play('hold');
+      simPost('/sim/touch', { gesture: 'press' });
+    });
+    const releaseHold = () => simPost('/sim/touch', { gesture: 'release' });
+    btn.addEventListener('pointerup', releaseHold);
+    btn.addEventListener('pointerleave', releaseHold);
+  } else if (touch === 'swipe_fwd') {
+    btn.addEventListener('click', () => {
+      sound.play('swipe');
+      simPost('/sim/touch', { gesture: 'forwardSwipe' });
+    });
+  } else if (touch === 'swipe_back') {
+    btn.addEventListener('click', () => {
+      sound.play('swipe');
+      simPost('/sim/touch', { gesture: 'backwardSwipe' });
+    });
+  }
 }
 
 async function simPost(path, body) {

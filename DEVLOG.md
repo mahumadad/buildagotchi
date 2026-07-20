@@ -733,6 +733,44 @@ reproducible en el robot físico.
 
 ---
 
+## 2026-07-20 (tarde) — Alinear vocabulario de cabeza con el firmware (D-13)
+
+### Qué se hizo
+
+Se retomó el trabajo interrumpido por corte de créditos y se completó la
+alineación del vocabulario táctil de la cabeza entre el bridge y el firmware.
+
+- **`server.ts`**: el `handleDeviceInput` de BLE ya no acepta `tap`/`hold`/
+  `swipe_fwd`/`swipe_back` como gestos crudos. El firmware real solo envía
+  `press`, `release`, `forwardSwipe`, `backwardSwipe` y `pet` (cuando lo
+  soporta). El bridge ahora deriva `tap` (`press` + `release` dentro de 300ms)
+  y `hold` (`press` ≥ 2000ms) localmente, de forma que el simulador y el robot
+  comparten la misma lógica. El doble toque destructivo sigue funcionando sobre
+  `press`/`release` derivados.
+- **`dashboard.js`**: los botones de touch del emulador envían `press`/`release`
+  en lugar de `tap`/`hold`, espejando exactamente lo que el CoreS3 reportaría.
+  El botón "tap" ahora es un `press` de 50ms; "hold" se mantiene con
+  `pointerdown`/`pointerup` y el servidor deriva el `hold` por duración.
+- **`server-touch.test.ts`**: se reescribió el harness para devolver el servidor
+  y sus dependencias, y los tests pasan a usar `press`/`release` para simular
+  toques. Se añadió un test de `hold` → `SLEEP`.
+
+### Decisiones y deuda
+
+- **D-13 sigue abierta**: la lógica de tap/hold ahora vive en el bridge, pero
+  el firmware todavía debe confirmar cuándo envía `press`/`release` y si el
+  doble toque debe derivarse en el device en lugar de en el servidor. La
+  alineación del vocabulario está hecha; la verificación real es Fase 1B.
+- **No se tocó la asignación semántica de `forwardSwipe`/`backwardSwipe`**: el
+  upstream ya los usa para caricias (HAPPY+corazón). Esa decisión se deja para
+  Fase 0/Fase 1B.
+
+### Commits
+
+- (a commitar) — Align head-touch vocabulary with firmware (`press`/`release`)
+
+---
+
 ## Pendientes inmediatos
 
 - [ ] Push a GitHub (20 commits ahead de `origin/main`)
