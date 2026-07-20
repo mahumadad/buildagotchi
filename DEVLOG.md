@@ -692,6 +692,47 @@ Cuatro commits nuevos tras el filtro del usuario: cualquier acción o sonido
 
 ---
 
+## 2026-07-19 (noche) — Más mejoras accionables: thinking y doble toque destructivo
+
+### Qué se hizo
+
+Tres commits más, siguiendo el mismo filtro: la acción o sonido debe ser
+reproducible en el robot físico.
+
+- **Indicador "pensando"** (`face-renderer.js`, configs, test): el `prompt`
+  ahora lleva el decorador `thinking` — tres puntitos rebotando cerca de la
+  boca. Aparece mientras el prompt está activo y desaparece cuando la
+  `response` lo retira. El decorador viaja en `ResolvedState`, así que el
+  StackChan físico lo puede reproducir. Se añadió un TTL override de 2m para
+  que no se apague en turnos largos (antes 15s).
+- **Doble toque para permisos destructivos** (`server.ts`, `dashboard.js`,
+  test): una cabezada (`tap`) aprueba un permiso normal de una vez; si el
+  permiso es `critical` (comandos destructivos configurados en
+  `criticalCommands`), la primera cabezada arma una guarda de 700ms y la
+  segunda dentro de la ventana aprueba. El dashboard muestra "double-tap
+  head to approve" en las tarjetas críticas. El simulador devuelve
+  `pending_confirmation` en la primera cabezada para que el usuario sepa
+  que debe repetir.
+
+### Decisiones y deuda
+
+- **3 fue fácilmente reproducible**: es solo un decorador más en el
+  `ResolvedState` que ya existe.
+- **1 tiene una pata fuera del bridge**: la lógica de doble toque corre en
+  el servidor y funciona si el sensor de cabeza envía eventos `tap`. El
+  firmware real hoy produce `press`/`release`/`forwardSwipe`/`backwardSwipe`
+  (D-13), no `tap`. Así que este cambio prepara el bridge, pero la alineación
+  del vocabulario del firmware sigue siendo deuda técnica. No añadí un botón
+  de "double-tap" en el simulador: el usuario simula la acción real tocando
+  dos veces el botón `tap` existente dentro de 700ms.
+
+### Commits
+
+- `34cef66` — Add thinking indicator during prompt-to-response gap
+- `287a568` — Require double head-tap to approve destructive permissions
+
+---
+
 ## Pendientes inmediatos
 
 - [ ] Push a GitHub (20 commits ahead de `origin/main`)
