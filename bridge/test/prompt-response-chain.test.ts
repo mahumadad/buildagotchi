@@ -189,17 +189,39 @@ describe('D-06: a response retires its own prompt', () => {
     expect(inFlight.filter((e) => e.category === 'prompt')).toEqual([]);
   });
 
-  it('the prompt id is forgotten after use — a later Stop does not re-resolve it', () => {
+  it('a second response retires the first — the latest answer wins immediately', () => {
     prompt(ctx.adapter, 's1');
     stop(ctx.adapter, 's1', 'primera respuesta');
     const firstResponse = ctx.attentionManager.snapshot().active?.event.id;
 
-    // A second Stop with no intervening prompt must not retire the response
-    // that is currently on screen.
+    // Another turn with no intervening prompt is rare, but the NORMAL case of
+    // prompt -> response -> prompt -> response has the same pathology: the new
+    // response would queue behind the old one for the full ambient TTL while
+    // the robot keeps showing the previous answer. Retiring the previous
+    // response (same resolvesEventId mechanism as D-06) fixes both.
     stop(ctx.adapter, 's1', 'segunda respuesta');
 
     const snap = ctx.attentionManager.snapshot();
     const inFlight = [...(snap.active ? [snap.active.event] : []), ...snap.queue];
-    expect(inFlight.map((e) => e.id)).toContain(firstResponse);
+    expect(inFlight.map((e) => e.id)).not.toContain(firstResponse);
+    expect(snap.active?.event.payload.text).toBe('segunda respuesta');
+  });
+
+  it('the prompt id is forgotten after use — a stale prompt id is not re-resolved', () => {
+    prompt(ctx.adapter, 's1');
+    stop(ctx.adapter, 's1', 'primera respuesta');
+    const firstResponse = ctx.attentionManager.snapshot().active?.event.id;
+
+    // A second Stop no longer carries the prompt id, so it cannot accidentally
+    // retire the first response via that stale id. It retires the previous
+    // response explicitly via lastResponseEventId, keeping the chain safe.
+    stop(ctx.adapter, 's1', 'segunda respuesta');
+
+    const snap = ctx.attentionManager.snapshot();
+    expect(snap.active?.event.payload.text).toBe('segunda respuesta');
+    // The stale id is a no-op: it is not found (already resolved) and the AM
+    // does not throw or get confused.
+    expect(() => stop(ctx.adapter, 's1', 'tercera respuesta')).not.toThrow();
+    expect(ctx.attentionManager.snapshot().active?.event.payload.text).toBe('tercera respuesta');
   });
 });

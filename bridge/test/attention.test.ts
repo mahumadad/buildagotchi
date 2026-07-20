@@ -444,4 +444,27 @@ describe('AttentionManager — what Gate 1 needs to be able to count', () => {
     am.tick();
     expect(am.snapshot().active).toBeNull();
   });
+
+  it('honours resolvesEventIds (plural) to retire multiple events at once', () => {
+    const d = deps();
+    const am = new AttentionManager(baseConfig(), d);
+    const active = ev({ category: 'response1', severity: 'ambient' });
+    const queuedPrompt = ev({ category: 'prompt', severity: 'ambient' });
+    am.push(active);
+    am.push(queuedPrompt);
+
+    // The resolver retires both the active and the queued prompt, leaving the
+    // queue empty. Because it is now ambient against an empty queue, it
+    // becomes active itself (same as a normal response resolving its prompt).
+    const resolver = ev({
+      category: 'response2',
+      severity: 'ambient',
+      payload: { resolvesEventIds: [active.id, queuedPrompt.id] },
+    });
+    am.push(resolver);
+
+    const snap = am.snapshot();
+    expect(snap.active?.event.category).toBe('response2');
+    expect(snap.queue).toHaveLength(0);
+  });
 });

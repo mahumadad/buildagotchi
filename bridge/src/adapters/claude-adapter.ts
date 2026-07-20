@@ -69,6 +69,15 @@ export interface ClaudeSession {
    * Claude gave it.
    */
   pendingPromptEventId?: string | undefined;
+  /**
+   * Event id of the latest `response` this session emitted. The NEXT response
+   * retires it (same `resolvesEventId` mechanism as D-06): both are `ambient`,
+   * so without this the newer answer would sit in the queue behind the older
+   * one for the full ambient TTL, and the robot would show stale text while
+   * Claude has already moved on. A `prompt` never retires it — the sticky
+   * balloon must survive the thinking gap between prompt and response.
+   */
+  lastResponseEventId?: string | undefined;
   pendingPermission?:
     | {
         eventId: string;
@@ -239,9 +248,19 @@ export class ClaudeAdapter implements Adapter {
         // The prompt has been answered; it no longer describes anything. Retire
         // it (D-06) or the response — also `ambient` — queues behind it and only
         // reaches the screen when the prompt expires 30s later.
+        // The PREVIOUS response is retired too: equal severity means the new
+        // answer would otherwise queue behind it for the full ambient TTL,
+        // showing stale text while Claude has already answered again. A
+        // response only stops being the latest when the next one arrives —
+        // never when a prompt arrives: the sticky balloon must survive the
+        // thinking gap (that's why the prompt rule stays silent).
         const answeredPrompt = session.pendingPromptEventId;
         session.pendingPromptEventId = undefined;
-        this.#emit('response', 'ambient', {
+        const previousResponse = session.lastResponseEventId;
+        const retires = [answeredPrompt, previousResponse].filter(
+          (id): id is string => id !== undefined,
+        );
+        session.lastResponseEventId = this.#emit('response', 'ambient', {
           sessionId,
           cwd: session.cwd,
           ...(enrichment?.tokens !== undefined ? { tokens: enrichment.tokens } : {}),
@@ -249,7 +268,8 @@ export class ClaudeAdapter implements Adapter {
             ? { contextTokens: enrichment.contextTokens }
             : {}),
           ...(text !== undefined ? { text } : {}),
-          ...(answeredPrompt !== undefined ? { resolvesEventId: answeredPrompt } : {}),
+          ...(retires.length === 1 ? { resolvesEventId: retires[0] } : {}),
+          ...(retires.length > 1 ? { resolvesEventIds: retires } : {}),
         });
         break;
       }

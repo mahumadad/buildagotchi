@@ -118,7 +118,7 @@ export class AttentionManager {
   push(e: Event): void {
     const now = Date.now();
 
-    // An event may declare that it retires another one (D3: the mechanism is
+    // An event may declare that it retires other ones (D3: the mechanism is
     // generic, not Claude-specific — a "CI green" retires a "CI red"). This is
     // bookkeeping, not attention, so it runs BEFORE the mode filter: otherwise
     // an ambient resolver arriving in SLEEP would be dropped and its target
@@ -127,9 +127,17 @@ export class AttentionManager {
     // carries an infinite TTL (S2.5.8) and can't be preempted by an ambient
     // event — as the active event, with the robot showing a warning for an
     // operation the user had already approved.
-    const resolvesEventId = e.payload.resolvesEventId;
-    if (typeof resolvesEventId === 'string') {
-      this.resolve(resolvesEventId, 'dismissed', 'external');
+    // Two payload shapes: `resolvesEventId` (single target, e.g. a permission
+    // resolve) and `resolvesEventIds` (list — a `response` retires both its
+    // own prompt and the session's previous response in one shot).
+    const retireIds = [
+      e.payload.resolvesEventId,
+      ...(Array.isArray(e.payload.resolvesEventIds) ? e.payload.resolvesEventIds : []),
+    ];
+    for (const id of retireIds) {
+      if (typeof id === 'string') {
+        this.resolve(id, 'dismissed', 'external');
+      }
     }
 
     if (!severityPassesMode(e.severity, this.#mode)) {
