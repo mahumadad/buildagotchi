@@ -812,7 +812,7 @@ desde el robot (el bridge no puede responder `AskUserQuestion` en modo monitor).
 
 ### Commits
 
-- `19c5d97` — Make AskUserQuestion visible (read-only Part 2)
+- `f466748` — Make AskUserQuestion visible (read-only Part 2)
 
 ---
 
