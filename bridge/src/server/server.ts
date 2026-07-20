@@ -213,6 +213,8 @@ export class BridgeServer {
   #hookBucket: TokenBucket;
   #sseClients = new Set<ServerResponse>();
   #sseKeepAlive: NodeJS.Timeout | null = null;
+  #lastHeadTapAt = 0;
+  #DOUBLE_TAP_WINDOW_MS = 700;
 
   constructor(opts: BridgeServerOptions) {
     this.#opts = opts;
@@ -679,7 +681,10 @@ export class BridgeServer {
     }
 
     const gesture = (detail as { gesture?: unknown })?.gesture;
-    if (gesture === 'tap' && this.#resolveFirstPendingPermission('approve', 'head')) return;
+    if (gesture === 'tap') {
+      const result = this.#resolveHeadTap();
+      if (result.consumed) return;
+    }
     if (gesture === 'hold') {
       this.#opts.attentionManager.setMode('SLEEP');
       this.#opts.stateMachine.apply(this.#opts.attentionManager.snapshot().active);
@@ -808,11 +813,17 @@ export class BridgeServer {
       return;
     }
     if (gesture === 'tap') {
-      const resolved = this.#resolveFirstPendingPermission('approve', 'head');
-      if (resolved) {
-        sendJson(res, 200, { gesture, action: 'approve', resolved: true, sessionId: resolved });
+      const result = this.#resolveHeadTap();
+      if (result.approved) {
+        sendJson(res, 200, { gesture, action: 'approve', resolved: true, sessionId: result.sessionId });
         return;
       }
+      if (result.consumed) {
+        sendJson(res, 202, { gesture, status: 'pending_confirmation', message: 'double-tap required for destructive command' });
+        return;
+      }
+      sendJson(res, 404, { error: 'no pending permission' });
+      return;
     }
     if (gesture === 'hold') {
       this.#opts.attentionManager.setMode('SLEEP');
@@ -848,6 +859,46 @@ export class BridgeServer {
       }
     }
     return null;
+  }
+
+  /**
+   * Head tap approval with double-tap guard for destructive commands.
+   * D6: critical permissions (rm, sudo, force push...) require a double head
+   * tap instead of a single one, so brushing the robot doesn't approve a
+   * dangerous command by accident. Non-critical permissions still approve on a
+   * single tap.
+   */
+  #resolveHeadTap(): { approved: boolean; consumed: boolean; sessionId?: string } {
+    if (!this.#opts.claudeAdapter) return { approved: false, consumed: false };
+    for (const [sessionId, session] of this.#opts.claudeAdapter.sessions()) {
+      const pending = session.pendingPermission;
+      if (!pending) continue;
+      if (pending.isCritical) {
+        const now = Date.now();
+        if (this.#lastHeadTapAt && now - this.#lastHeadTapAt <= this.#DOUBLE_TAP_WINDOW_MS) {
+          this.#lastHeadTapAt = 0;
+          const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, 'approved');
+          if (eventId) {
+            this.#opts.attentionManager.resolve(eventId, 'approved', 'head');
+            this.#opts.lifeStats?.recordResolution('approved', 'head');
+            focusTerminal(session.cwd, this.#opts.logger);
+            return { approved: true, consumed: true, sessionId };
+          }
+        }
+        this.#lastHeadTapAt = now;
+        return { approved: false, consumed: true };
+      }
+      // Non-critical: single tap approves, just like before.
+      this.#lastHeadTapAt = 0;
+      const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, 'approved');
+      if (eventId) {
+        this.#opts.attentionManager.resolve(eventId, 'approved', 'head');
+        this.#opts.lifeStats?.recordResolution('approved', 'head');
+        focusTerminal(session.cwd, this.#opts.logger);
+        return { approved: true, consumed: true, sessionId };
+      }
+    }
+    return { approved: false, consumed: false };
   }
 
   async #handleSimPermission(req: IncomingMessage, res: ServerResponse): Promise<void> {

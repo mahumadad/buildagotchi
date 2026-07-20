@@ -378,7 +378,8 @@ function renderSessions(sessions) {
         session.pendingPermission.command ??
         '(command unavailable)';
       const marker = session.pendingPermission.isCritical ? '⚠ ' : '';
-      perm.textContent = `${marker}${truncate(detail, 120)}`;
+      const instruction = session.pendingPermission.isCritical ? ' · double-tap head to approve' : '';
+      perm.textContent = `${marker}${truncate(detail, 120)}${instruction}`;
       card.appendChild(perm);
     } else if (session.lastResponse) {
       // Response only — the name already carries the latest prompt.

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClaudeAdapter } from '../src/adapters/claude-adapter.js';
 import { AttentionManager } from '../src/core/attention.js';
 import { EventBus } from '../src/core/bus.js';
@@ -62,7 +62,7 @@ function makeStateMachine(): StateMachine {
   });
 }
 
-function makeClaudeAdapterWithPendingPermission() {
+function makeClaudeAdapterWithPendingPermission(isCritical = false) {
   const sessions = new Map<string, Record<string, unknown>>([
     [
       's1',
@@ -71,7 +71,7 @@ function makeClaudeAdapterWithPendingPermission() {
         cwd: '/tmp/p',
         state: 'permission_pending',
         lastEventAt: Date.now(),
-        pendingPermission: { eventId: 'e1', isCritical: false },
+        pendingPermission: { eventId: 'e1', isCritical },
       },
     ],
   ]);
@@ -124,7 +124,12 @@ describe('BridgeServer touch gestures', () => {
     return server;
   }
 
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
   afterEach(() => {
+    vi.useRealTimers();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -142,6 +147,42 @@ describe('BridgeServer touch gestures', () => {
     const claudeAdapter = makeClaudeAdapterWithPendingPermission();
     const server = makeServer(claudeAdapter);
     server.handleDeviceInput('touch', { gesture: 'pet' });
+    expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
+  });
+
+  it('a single head tap approves a non-critical pending permission', () => {
+    const claudeAdapter = makeClaudeAdapterWithPendingPermission(false);
+    claudeAdapter.resolvePermission = vi.fn(() => 'e1');
+    const server = makeServer(claudeAdapter);
+    server.handleDeviceInput('touch', { gesture: 'tap' });
+    expect(claudeAdapter.resolvePermission).toHaveBeenCalledWith('s1', 'approved');
+  });
+
+  it('a single head tap on a critical permission only arms the double-tap guard', () => {
+    const claudeAdapter = makeClaudeAdapterWithPendingPermission(true);
+    claudeAdapter.resolvePermission = vi.fn(() => 'e1');
+    const server = makeServer(claudeAdapter);
+    server.handleDeviceInput('touch', { gesture: 'tap' });
+    expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
+  });
+
+  it('two head taps within the window approve a critical permission', () => {
+    const claudeAdapter = makeClaudeAdapterWithPendingPermission(true);
+    claudeAdapter.resolvePermission = vi.fn(() => 'e1');
+    const server = makeServer(claudeAdapter);
+    server.handleDeviceInput('touch', { gesture: 'tap' });
+    server.handleDeviceInput('touch', { gesture: 'tap' });
+    expect(claudeAdapter.resolvePermission).toHaveBeenCalledTimes(1);
+    expect(claudeAdapter.resolvePermission).toHaveBeenCalledWith('s1', 'approved');
+  });
+
+  it('two slow head taps do not approve a critical permission', () => {
+    const claudeAdapter = makeClaudeAdapterWithPendingPermission(true);
+    claudeAdapter.resolvePermission = vi.fn(() => 'e1');
+    const server = makeServer(claudeAdapter);
+    server.handleDeviceInput('touch', { gesture: 'tap' });
+    vi.advanceTimersByTime(1_000); // past the 700ms window
+    server.handleDeviceInput('touch', { gesture: 'tap' });
     expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
   });
 });
