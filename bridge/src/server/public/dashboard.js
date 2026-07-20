@@ -627,6 +627,20 @@ for (const btn of document.querySelectorAll('[data-btn]')) {
   });
 }
 
+// Keyboard parity with the physical buttons: A approve/deny pending, C cycle mode.
+// Ignores typing in inputs and browser shortcuts (Ctrl/Cmd/Alt).
+document.addEventListener('keydown', (ev) => {
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return;
+  const key = ev.key.toLowerCase();
+  if (!['a', 'b', 'c'].includes(key)) return;
+  const btn = document.querySelector(`[data-btn="${key.toUpperCase()}"]`);
+  if (btn) {
+    ev.preventDefault();
+    btn.click();
+  }
+});
+
 const servoYawEl = document.getElementById('servo-yaw');
 const servoYawVal = document.getElementById('servo-yaw-val');
 const servoPitchEl = document.getElementById('servo-pitch');
