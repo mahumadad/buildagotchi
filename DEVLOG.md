@@ -869,7 +869,7 @@ transition hacia Claude con actividad real de input.
 
 ### Commits
 
-- (a commitar) — Filter trust-check by real input activity (D-12)
+- `59c213c` — Filter trust-check by real input activity (D-12)
 
 ---
 
