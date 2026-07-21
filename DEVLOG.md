@@ -835,7 +835,7 @@ Se corrigió el ruido de `Unhandled Rejection` que aparecía en casi todos los r
 
 ### Commits
 
-- (a commitar) — Fix unhandled rejection when scanClaudeSessions returns undefined
+- `abe7fcf` — Fix unhandled rejection when scanClaudeSessions returns undefined
 
 ---
 
