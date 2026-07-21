@@ -816,6 +816,29 @@ desde el robot (el bridge no puede responder `AskUserQuestion` en modo monitor).
 
 ---
 
+## 2026-07-20 (noche, segunda vuelta) — Limpieza de tests: unhandled rejection en #runScan
+
+### Qué se hizo
+
+Se corrigió el ruido de `Unhandled Rejection` que aparecía en casi todos los runs
+ de `claude-adapter.test.ts` (y de vez en cuando en el suite completo).
+
+- **`claude-adapter.ts`**: `#runScan` ahora usa `(await scanClaudeSessions(...)) ?? []`.
+  El mock en tests devolvía `undefined` en algunos casos, y el código asumía que
+  siempre recibía un array. Con el fallback vacío se comporta igual que "no hay
+  sesiones nuevas" sin lanzar.
+
+### Resultado
+
+- `npx vitest run` → 56 archivos, 574 tests, **0 errores no manejados**.
+- No cambia comportamiento en producción: `scanClaudeSessions` real devuelve array.
+
+### Commits
+
+- (a commitar) — Fix unhandled rejection when scanClaudeSessions returns undefined
+
+---
+
 ## Pendientes inmediatos
 
 - [ ] Push a GitHub (20 commits ahead de `origin/main`)

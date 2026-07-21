@@ -599,7 +599,7 @@ export class ClaudeAdapter implements Adapter {
     const projectsDir = this.#deps.projectsDir ?? defaultProjectsDir();
     if (!projectsDir) return;
     const freshWindow = this.#cfg.scanFreshWindowMs ?? DEFAULT_SCAN_FRESH_WINDOW_MS;
-    const discovered = await scanClaudeSessions(projectsDir, freshWindow, this.#deps.logger);
+    const discovered = (await scanClaudeSessions(projectsDir, freshWindow, this.#deps.logger)) ?? [];
     // Desktop titles are cheap to read (~small JSONs) and apply even if no new
     // jsonl session was discovered, so we fetch them regardless.
     const desktopDir = this.#deps.claudeDesktopSessionsDir ?? defaultClaudeDesktopSessionsDir();
