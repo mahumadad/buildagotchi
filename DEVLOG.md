@@ -839,6 +839,40 @@ Se corrigió el ruido de `Unhandled Rejection` que aparecía en casi todos los r
 
 ---
 
+## 2026-07-20 (noche, tercera vuelta) — D-12: trust-check filtra focus sin input humano
+
+### Qué se hizo
+
+Se implementó la **opción (a)** del fix propuesto en D-12: correlacionar el focus
+transition hacia Claude con actividad real de input.
+
+- **`bridge/src/adapters/trust-check.ts`**: `TrustCheckDeps` ahora acepta
+  `secondsSinceLastInput()` y `inputThresholdSeconds`. `poll()` descarta un trust
+  check cuando el último input real ocurrió hace más del umbral (default 1 s). Se
+  añadió `secondsSinceLastInput()` que en macOS consulta
+  `CGEventSourceSecondsSinceLastEventType` para eventos de teclado/mouse/scroll
+  vía `python3` + ctypes; en otras plataformas o si falla, devuelve null y el
+  comportamiento vuelve al pre-D12 (no filtra).
+- **`bridge/src/index.ts`**: el adaptador de producción se inicializa con el helper
+  de input real.
+- **`bridge/test/trust-check.test.ts`**: 3 tests nuevos para (1) no contar sin input
+  reciente, (2) contar con input reciente, (3) fallback a contar cuando el helper
+  no está disponible.
+- **`DEBT.md`**: D-12 se actualiza: fix implementado, queda calibrar el umbral con
+  datos reales antes de Gate 1.
+
+### Resultado
+
+- `npx vitest run` → 56 archivos, 577 tests, 0 errores.
+- El trust-check deja de inflarse por auto-focus de Claude/Chrome; ahora solo
+  cuenta cuando un humano tocó teclado/mouse justo antes de la transición.
+
+### Commits
+
+- (a commitar) — Filter trust-check by real input activity (D-12)
+
+---
+
 ## Pendientes inmediatos
 
 - [ ] Push a GitHub (20 commits ahead de `origin/main`)

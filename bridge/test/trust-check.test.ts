@@ -15,7 +15,7 @@ import type { Emotion } from '../src/core/events.js';
  *      user is answering the robot, not distrusting it.
  */
 
-function harness(opts: { emotion?: Emotion } = {}) {
+function harness(opts: { emotion?: Emotion; secondsSinceLastInput?: number | null } = {}) {
   let now = 1_000_000;
   let front: string | null = null;
   let emotion: Emotion = opts.emotion ?? 'NEUTRAL';
@@ -25,6 +25,8 @@ function harness(opts: { emotion?: Emotion } = {}) {
     watchedBundleId: 'com.anthropic.claudefordesktop',
     frontmostBundleId: () => front,
     currentEmotion: () => emotion,
+    secondsSinceLastInput: () => opts.secondsSinceLastInput ?? null,
+    inputThresholdSeconds: 1.0,
     record: (data) => recorded.push(data),
     now: () => now,
   });
@@ -156,5 +158,35 @@ describe('TrustCheckAdapter (D22)', () => {
     a.stop();
     expect(vi.getTimerCount()).toBe(0);
     vi.useRealTimers();
+  });
+
+  it('does not count a focus change with no recent human input (D12)', () => {
+    const h = harness({ secondsSinceLastInput: 5.0 });
+    h.focus(OTHER);
+    h.adapter.poll();
+    h.focus(CLAUDE);
+    h.adapter.poll();
+
+    expect(h.count).toBe(0);
+  });
+
+  it('counts a focus change with recent human input (D12)', () => {
+    const h = harness({ secondsSinceLastInput: 0.5 });
+    h.focus(OTHER);
+    h.adapter.poll();
+    h.focus(CLAUDE);
+    h.adapter.poll();
+
+    expect(h.count).toBe(1);
+  });
+
+  it('falls back to counting when input time is unavailable (D12)', () => {
+    const h = harness({ secondsSinceLastInput: null });
+    h.focus(OTHER);
+    h.adapter.poll();
+    h.focus(CLAUDE);
+    h.adapter.poll();
+
+    expect(h.count).toBe(1);
   });
 });

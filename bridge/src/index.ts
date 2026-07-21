@@ -6,6 +6,7 @@ import {
   CLAUDE_DESKTOP_BUNDLE_ID,
   TrustCheckAdapter,
   readFrontmostBundleId,
+  secondsSinceLastInput,
 } from './adapters/trust-check.js';
 import { ProtocolSession } from './ble/protocol.js';
 import { SimTransport } from './ble/transport-sim.js';
@@ -325,6 +326,7 @@ async function main(): Promise<void> {
     watchedBundleId: CLAUDE_DESKTOP_BUNDLE_ID,
     frontmostBundleId: readFrontmostBundleId,
     currentEmotion: () => stateMachine.current().emotion,
+    secondsSinceLastInput: secondsSinceLastInput,
     record: (data) =>
       recorder.record({ line_type: 'event', ts: Date.now(), context: recorderContext(), data }),
   });

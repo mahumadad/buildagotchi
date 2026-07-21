@@ -20,6 +20,14 @@ export interface TrustCheckDeps {
   currentEmotion: () => Emotion;
   /** Writes the synthetic event straight to the Event Recorder. */
   record: (data: Record<string, unknown>) => void;
+  /**
+   * Seconds since the last real keyboard/mouse event, or null if the platform
+   * cannot provide it. A focus change with no recent input is usually the OS
+   * stealing focus, not a human checking on Claude (D12).
+   */
+  secondsSinceLastInput?: () => number | null;
+  /** Threshold below which a focus change is considered machine-driven. */
+  inputThresholdSeconds?: number;
   now?: () => number;
 }
 
@@ -87,6 +95,13 @@ export class TrustCheckAdapter {
     const emotion = this.#deps.currentEmotion();
     if (!isCalm(emotion)) return; // answering the robot, not distrusting it
 
+    // D12: a focus change with no recent keyboard/mouse input is usually the OS
+    // auto-stealing focus (Claude/Chrome recovering the front). Only count it as
+    // a trust check if a human actually touched an input device recently.
+    const secondsSinceInput = this.#deps.secondsSinceLastInput?.() ?? null;
+    const threshold = this.#deps.inputThresholdSeconds ?? 1.0;
+    if (secondsSinceInput !== null && secondsSinceInput > threshold) return;
+
     this.#deps.record({
       source: 'trust_check',
       category: 'trust_check',
@@ -119,6 +134,39 @@ export function readFrontmostBundleId(): string | null {
     return match?.[1] ?? null;
   } catch (err) {
     logger.debug({ err }, 'could not read the frontmost app');
+    return null;
+  }
+}
+
+/**
+ * Seconds since the last keyboard or mouse event, using CoreGraphics on macOS.
+ * Returns null on non-macOS platforms or if the helper cannot run. The fallback
+ * preserves the pre-D12 behavior: count every focus transition that passes the
+ * other filters.
+ */
+export function secondsSinceLastInput(): number | null {
+  if (process.platform !== 'darwin') return null;
+  const script = `import ctypes, ctypes.util
+cg = ctypes.CDLL(ctypes.util.find_library('CoreGraphics'))
+state = 0  # kCGEventSourceStateCombinedSessionState
+event_types = [1, 2, 3, 4, 10, 11, 14, 22]  # mouse + keyboard + scroll
+min_secs = float('inf')
+for et in event_types:
+    secs = cg.CGEventSourceSecondsSinceLastEventType(state, et)
+    if secs < min_secs:
+        min_secs = secs
+print(min_secs)
+`;
+  try {
+    const out = execFileSync('python3', ['-c', script], {
+      encoding: 'utf8',
+      timeout: 1000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    const n = Number(out);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  } catch (err) {
+    logger.debug({ err }, 'could not read last input time');
     return null;
   }
 }

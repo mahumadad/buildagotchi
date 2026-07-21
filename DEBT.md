@@ -66,16 +66,18 @@ anti-rebote la deja pasar y se graba un trust check que nadie hizo.
 D20. Un trust check inflado dice "el usuario no confía en la cara" y el Gate 1
 concluye no seguir con Fase 3. La métrica no se equivoca hacia el lado seguro.
 
-**Fix**: no hay uno obvio, y por eso es deuda y no un bug que arreglar de paso.
-Ideas, en orden de coste: (a) correlacionar con actividad de input real —
-`CGEventSourceSecondsSinceLastEventType` da segundos desde el último teclado o
-mouse, y un foco sin input en el último segundo no lo hizo un humano; (b)
-descartar el foco si la app anterior era también Claude; (c) medir la métrica
-solo cuando el bridge no acaba de emitir un evento.
+**Fix implementado (2026-07-20)**: opción (a). `TrustCheckAdapter` ahora recibe
+`secondsSinceLastInput()` y descarta un focus transition si el último input real
+(teclado/mouse/scroll) fue hace más de `inputThresholdSeconds` (default 1 s). La
+implementación en macOS usa `CGEventSourceSecondsSinceLastEventType` vía `python3` + ctypes;
+falla silenciosamente a "no filtrar" en plataformas sin helper o sin `python3`.
 
-La (a) parece correcta y barata, y necesita medirse antes de creerle.
+**Qué falta**: calibrar el umbral con datos reales. 1 s es una primera aproximación;
+contra una muestra de un día de uso hay que verificar que no descarte transiciones
+humanas legítimas (alt-tab rápido, hotkey) y que sí atrape los auto-focus del OS.
 
-**Costo**: ~2 h más un día de datos reales para calibrar el umbral.
+**Costo**: el código ya está (~2 h). El día de datos reales para ajustar el umbral
+es lo que queda.
 
 ---
 
