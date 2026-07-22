@@ -430,3 +430,25 @@ Después de completar todo lo anterior, escribir un párrafo corto respondiendo:
 - [x] Cara cambió con los `state` HAPPY/ANGRY/SAD *(ciclo bleak 1B; confirmado usuario)*
 - [x] Tras matar el bridge / desconectar BLE → SLEEPY *(confirmado)*
 - [x] Reiniciar bridge → `state_sync` restaura cara *(confirmado usuario 2026-07-22)*
+- [x] Balloon texto + clear sin sleepy *(confirmado)*
+- [x] Remount face al connect restaura dos ojos *(confirmado)*
+
+---
+
+## Log de problemas (hardware / BLE)
+
+Bitácora viva. Cada incidente nuevo: fecha, síntoma, causa, fix.  
+El relato de sesión va también a [DEVLOG.md](DEVLOG.md).
+
+| Fecha | Síntoma | Causa | Fix / estado |
+|---|---|---|---|
+| 2026-07-22 | Flash/esptool al monitor LG | `cu.usbmodem811…` ≠ CoreS3 | Usar `cu.usbmodem101` (303A) |
+| 2026-07-22 | Cara negra / no arranca solo | Host `-d` espera xsbug | Release / sin debug host |
+| 2026-07-22 | Reboot loop al abrir UARTServer | Bug/crash stack BLE+UARTServer en CoreS3 | MOD con `BLEServer` |
+| 2026-07-22 | No aparece en scan BLE | ADV overflow name+UUID128 | Solo `completeName` |
+| 2026-07-22 | Link up, cara SLEEPY | Sin `state_sync` inicial | Seed + sync post-hello |
+| 2026-07-22 | Solo boca / cara rota | Write NUS > 64 B truncado | Chunking noble |
+| 2026-07-22 | “Sin balloon” = sleepy | Disconnect → D16 | Esperado; clear≠disconnect |
+| 2026-07-22 | Un ojo a medias | Eyelid Contour stale + servo timeouts | Remount `SimpleFace` on connect |
+| 2026-07-22 | Serial USB mudo | JTAG tras xsbug | Reset físico / replug |
+| *(abierto)* | Rain `timeout.` scservo | Bus/IDs/power | Investigar; remount mitiga cara |

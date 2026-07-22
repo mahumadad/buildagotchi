@@ -873,31 +873,59 @@ transition hacia Claude con actividad real de input.
 
 ---
 
-## 2026-07-22 — Fase 0 cerrada + Fase 1B BLE real
+## 2026-07-22 — Fase 0 + 1B BLE + balloon + cara (log de sesión)
 
-### Fase 0 (hardware)
-- Toolchain Moddable 8.3.1 + ESP-IDF v6.0 vía `xs-dev`; target
-  `esp32:./platforms/m5stackchan_cores3`.
-- Smoke + R2: cara, servos, LEDs, WiFi, BLE advertise `buildagotchi-r2`, stress
-  5 min sin panic. Audio/PTT diferidos.
-- Evidencia en `NOTES.md` (veredicto Fase 0).
+Plan: `docs/superpowers/plans/2026-07-22-fase-1b-ble-real.md`.  
+Log vivo de problemas: `NOTES.md` § «Log de problemas (hardware / BLE)».
 
-### Fase 1B (M6)
-- Bridge: `NobleTransport` + NUS UUIDs; `--simulate` intacto.
-- Firmware: mod `buildagotchi_ble` (D7 JSON-lines, emotions/LEDs/servo, D16
-  SLEEPY 15 s). `UARTServer` causaba reboot loop → `BLEServer` directo.
-- E2E: noble `ble link up`; caras HAPPY/ANGRY/SAD; SLEEPY al desconectar;
-  `state_sync` al reconectar (confirmado visual).
-- Fixes en sesión: seed+sync post-hello; chunking NUS ≤64 B; MOD vía `BLEServer`
-  (UARTServer reboot-loop en CoreS3).
+### Hecho hoy
 
-Plan: `docs/superpowers/plans/2026-07-22-fase-1b-ble-real.md`.
+| Qué | Commit / evidencia |
+|---|---|
+| Fase 0 kit (cara, servos, LEDs, WiFi, BLE R2) | NOTES veredicto Fase 0 |
+| Fase 1B NobleTransport + MOD `buildagotchi_ble` | `0d4c22f` |
+| Balloon `ResolvedState.balloon` → `showBalloon` | `01393d7` |
+| Remount face al conectar (ojos rotos) | `d78dbe1` |
+
+### Problemas encontrados → fix
+
+1. **Puerto serial falso** — `/dev/cu.usbmodem811…` era el monitor LG, no el CoreS3.  
+   Real: `/dev/cu.usbmodem101` (vid `303A`).
+2. **Host debug (`-d`)** espera xsbug; sin él no pinta. Smoke/release sin `-d`.
+3. **`UARTServer` en MOD** → reboot loop `RTC_SW_CPU_RST` al advertising.  
+   Fix: `BLEServer` directo (host ya trae NUS services).
+4. **ADV name+UUID128** no cabe en 31 B → no se veía en scan.  
+   Fix: solo `completeName` en ADV (NUS vía GATT).
+5. **Bridge up pero cara SLEEPY** — `start()` no hacía `state_sync` inicial; `#lastState` null.  
+   Fix: seed `sendState(current)` + sync post-hello; `sendState` no escribe si link down.
+6. **Cara “solo boca” / truncada** — write NUS > `maxBytes` 64 truncaba el JSON.  
+   Fix: chunking en `NobleTransport` (`NUS_RX_CHUNK_BYTES=64`).
+7. **Clear balloon confundido con SLEEPY** — al cortar BLE, D16 pinta SLEEPY.  
+   Confirmado: `balloon:""` deja NEUTRAL despierto si el link sigue up.
+8. **Un ojo a medias** tras uso — Contour de párpado stale (lluvia de `timeout.` del bus servo).  
+   Fix: `renderer.setFace(new SimpleFace())` en connect y al salir de safe mode.
+9. **USB JTAG mudo** tras xsbug a veces — reset físico / replug.
+
+### Comandos útiles (esta máquina)
+
+```bash
+# Bridge real (no simulate)
+npx tsx bridge/src/index.ts run --config ./config.yaml
+
+# Puerto
+UPLOAD_PORT=/dev/cu.usbmodem101
+```
+
+### Siguiente
+
+- Touch cabeza → bridge (Gate 1: aprobar permisos desde el robot).
+- Gate 1 uso real; no Fase 3 hasta entonces (ROADMAP).
 
 ---
 
 ## Pendientes inmediatos
 
-- [ ] Push a GitHub
+- [x] Push a GitHub (1B + balloon + remount)
 - [x] Checklist §8.1 completo (2026-07-10). El paso 11 estaba mal escrito y se
       corrigió en la spec.
 - [ ] Fase 3 (Calendar → GitHub → Jira). El OAuth de los MCP necesita una sesión
@@ -906,6 +934,8 @@ Plan: `docs/superpowers/plans/2026-07-22-fase-1b-ble-real.md`.
 - [x] Fase 1B: BLE real con noble + CoreS3 (OK visual 2026-07-22)
 - [ ] Gate 1: 3 semanas de uso real del MVP (criterios en ROADMAP.md)
 - [x] Balloon en firmware (`ResolvedState.balloon` → `showBalloon`, OK visual)
+- [ ] Touch BLE → bridge (gestos cabeza)
+- [ ] Bus servo: rain of `timeout.` (cara/UI puede degradarse)
 
 [DEBT.md](DEBT.md) queda con varias entradas abiertas: D-03 (decisión pendiente
 sobre `pulse`), D-10 (medición de latencia del firmware), D-12 (trust-check), D-13
