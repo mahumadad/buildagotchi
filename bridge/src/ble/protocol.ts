@@ -122,6 +122,10 @@ export class ProtocolSession {
     if (ok) {
       this.#setLinkHealthy(true);
       this.#scheduleHelloRefresh(HELLO_REFRESH_MS);
+      // Initial connect must push face state too — reconnect already did via
+      // #attemptReconnect. Without this, firmware stays in D16 SLEEPY after a
+      // prior disconnect even though the link is healthy.
+      this.#sendStateSync();
     } else {
       this.#clockOffset = 0;
       this.#deps.metrics.counter('handshake_failures_total').inc();
@@ -154,6 +158,10 @@ export class ProtocolSession {
 
   sendState(state: ResolvedState): void {
     this.#lastState = state;
+    // Always remember the latest face; only put it on the wire when the link
+    // can carry it. Callers may seed before connect() (composition root) so
+    // start()/reconnect can state_sync immediately after hello.
+    if (!this.#linkHealthy) return;
     this.#sendStatePayload('state', state);
   }
 
@@ -189,8 +197,13 @@ export class ProtocolSession {
   }
 
   async #refreshHello(): Promise<void> {
+    const wasHealthy = this.#linkHealthy;
     const ok = await this.#sendHelloAndAwait();
     if (ok) {
+      this.#setLinkHealthy(true);
+      // Recovering from a failed initial handshake: push face once the link
+      // is actually usable (same as start()/reconnect).
+      if (!wasHealthy) this.#sendStateSync();
       this.#scheduleHelloRefresh(HELLO_REFRESH_MS);
     } else {
       this.#deps.metrics.counter('handshake_failures_total').inc();

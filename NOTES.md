@@ -8,38 +8,52 @@ Llenar mientras se ejecuta [SETUP.md](SETUP.md) y los pasos de Fase 0 del
 inventar. Si algo funciona pero raro, describir el "raro". Este archivo es
 evidencia — sirve para las decisiones posteriores, no para lucirse.
 
+**Sesión 2026-07-22**: toolchain OK → host release flasheado → boot Wi‑Fi OK →
+smoke MOD de servo/LED corrió (con muchos `timeout.` de servo). Falta checklist
+visual del usuario (cara/servos/LEDs) y R2/R7 completos.
+
 ---
 
 ## Versiones instaladas
 
 Llenar tras Sección A del SETUP.
 
-- **macOS**: `___`
-- **Chip Mac**: `___` (Apple Silicon / Intel — importante para algunos builds)
-- **Xcode CLT**: `___`
-- **Homebrew**: `___`
-- **Node**: `___`
-- **Python**: `___`
-- **ModdableSDK commit**: `___` (git rev-parse HEAD en $MODDABLE)
-- **ESP-IDF versión**: `___` (git describe --tags en $IDF_PATH)
-- **stack-chan commit**: `___` (git rev-parse HEAD en stack-chan/)
+- **macOS**: `26.4.1` (Build 25E253)
+- **Chip Mac**: `arm64` (Apple Silicon)
+- **Xcode CLT**: `/Library/Developer/CommandLineTools`
+- **Homebrew**: `6.0.12`
+- **Node**: `v26.3.0`
+- **Python**: `3.14.6` (Homebrew); ESP-IDF usa venv `idf6.0_py3.14_env`
+- **ModdableSDK commit**: `23b4d6b` (tag `8.3.1`) en `~/.local/share/moddable`
+- **ESP-IDF versión**: `v6.0` en `~/.local/share/esp32/esp-idf`
+- **stack-chan commit**: `e33094a4` (subdir `stack-chan/`)
+
+Instalación vía `xs-dev` (recomendado por stack-chan), no clone manual a
+`~/Projects/moddable`. Env persistido en `~/.zshrc`:
+`MODDABLE`, `PATH` (+ mcconfig), `IDF_PATH`, alias `get_idf`.
 
 ---
 
 ## Setup del SDK
 
-- [ ] A1 — Prerrequisitos macOS instalados
-- [ ] A2 — ModdableSDK instalado y `mcconfig -h` responde
-- [ ] A3 — Simulador Mac (helloworld) corrió OK
-- [ ] A4 — ESP-IDF instalado y `get_idf && idf.py --version` responde
-- [ ] A5 — Build helloworld para `esp32/m5stack_cores3` compila sin errores
-- [ ] A6 — Deps específicas de stack-chan cubiertas
+- [x] A1 — Prerrequisitos macOS instalados
+- [x] A2 — ModdableSDK instalado y `mcconfig` responde (`xs-dev setup`)
+- [ ] A3 — Simulador Mac (helloworld) corrió OK — *no verificado* (saltado; ESP32 ok)
+- [x] A4 — ESP-IDF instalado (`xs-dev setup --device=esp32`, doctor muestra esp32)
+- [x] A5 — Build host para `esp32:./platforms/m5stackchan_cores3` completa sin errores
+- [x] A6 — Deps stack-chan: `npm i` en `firmware/`; hace falta `node_modules/.bin` en PATH para `tsc`
 
 **Problemas encontrados en el setup** (versión que no compila, comando que no
 existe, cosa que estaba desactualizada en docs):
 
 ```
-(anotar)
+- SETUP.md apunta a ~/Projects/moddable + ESP-IDF v5.x; realidad 2026-07-22:
+  Moddable 8.3.1 pide ESP-IDF v6.0. xs-dev instala en ~/.local/share/{moddable,esp32}.
+- `mcconfig -t deploy` sin build previo: "Please build before deploy".
+- Build falla si `tsc` no está en PATH → export PATH="$PWD/node_modules/.bin:$PATH".
+- Warning benigno: no modules match .../typings/btutils
+- pyserial: xs-dev avisó que no pudo instalarlo en el Python de sistema;
+  ya está en el venv de IDF 6.0.
 ```
 
 ---
@@ -50,31 +64,63 @@ Llenar cuando llegue el CoreS3 y esté flasheado (Sección B).
 
 ### B1 — Reconocimiento
 
-- **Path serial de la CoreS3**: `___` (ej: `/dev/cu.usbmodem1101`)
-- **Driver necesario**: `___` (o "ninguno")
-- **Reconocido tras cable**: primer intento / tras reset / tras cambio de cable
+- **Path serial de la CoreS3**: `/dev/cu.usbmodem101`
+  (`303A:1001` Espressif "USB JTAG/serial debug unit", MAC `68:EE:8F:D7:40:A8`)
+- **Falso positivo a ignorar**: `/dev/cu.usbmodem811NTVSCT9432` = LG "USB Controls"
+- **Driver necesario**: ninguno (USB-Serial/JTAG nativo)
+- **Reconocido tras cable**: sí, al conectar el CoreS3 directo al Mac
 
 ### B2 — Flash del firmware stock
 
-- **Comando exacto usado**: `___`
-- **Duración del build**: `___`
-- **Tamaño final del binario**: `___` (aparece al final del flash)
-- **Warnings notables**: `___`
-- **Errores encontrados**: `___` (o "ninguno")
+- **Comando exacto usado**:
+  ```
+  export MODDABLE=$HOME/.local/share/moddable
+  export PATH="$PWD/node_modules/.bin:$MODDABLE/build/bin/mac/release:$PATH"
+  export IDF_PATH=$HOME/.local/share/esp32/esp-idf
+  export UPLOAD_PORT=/dev/cu.usbmodem101
+  . "$IDF_PATH/export.sh"
+  cd stack-chan/firmware
+  # IMPORTANTE: sin -d (release). Con -d el host se cuelga esperando xsbug.
+  mcconfig -m -p esp32:./platforms/m5stackchan_cores3 -t build \
+    "$PWD/stackchan/manifest_m5stackchan_cores3.json"
+  python -m esptool --chip esp32s3 -p $UPLOAD_PORT -b 460800 \
+    --before default-reset --after hard-reset write-flash \
+    --flash-mode dio --flash-freq 80m --flash-size 16MB \
+    0x0 .../bootloader.bin 0x8000 .../partition-table.bin 0x10000 .../xs_esp32.bin
+  ```
+- **Duración del build**: ~113 s debug / ~163 s release (IDF cache)
+- **Tamaño final del binario**: release `xs_esp32.bin` = 3 741 456 bytes; hash verified
+- **Warnings notables**: `typings/btutils` no match; ninja jobserver pipe warning
+- **Errores encontrados**: debug build (`-d`) bootea pero espera xsbug (`<?xs-00000000?>`).
+  Release OK. Primer intento falló por puerto LG equivocado.
 
 ### B3 — Primer boot
 
-- [ ] Pantalla enciende
-- [ ] Cara renderiza (¿qué emoción de partida?): `___`
-- [ ] Servos se mueven al arranque: `___` (describir movimiento)
-- [ ] LEDs patrón inicial: `___`
-- [ ] Speaker emite sonido: `___`
-- [ ] Sin panics en `idf.py monitor`: `___`
+- [x] Pantalla enciende — confirmado por usuario (2026-07-22)
+- [x] Cara renderiza (emoción de partida): cara visible (detalle de emoción no anotado)
+- [x] Servos se mueven al arranque: usuario vio que **bajó** (tilt) en smoke 2026-07-22; pan no confirmado; 77× `timeout.` en serial
+- [x] LEDs patrón inicial: confirmado visual + serial (`red` → `blink green` → `rainbow` → `lightOff`)
+- [ ] Speaker emite sonido: *no verificado*
+- [x] Sin panics en monitor: sí (smoke llegó a `complete`; 77× `timeout.` de servo)
 
-**Log del monitor** (primeros 30s tras boot, cualquier cosa útil):
+**Log del monitor** (tras flash release + smoke MOD):
 
 ```
-(pegar)
+ESP-ROM:esp32s3-20210327
+[main] start wasm=false
+WiFi connect → Connected to: The Promised WLAN KP
+Got IP address: 10.70.121.164
+[main] loading default mod
+[main] onLaunch shouldRobotCreate=true
+[scservo] serial port=1 tx=6 rx=7 baud=1000000
+[py32] version: 0x41
+[m5stackchan-servo] configured PY32 servo power pin 0
+[m5stackchan-servo] servo power on (true)
+[main] robot created
+[M5StackChan CoreS3 smoke] start
+[M5StackChan CoreS3 smoke] servo: torque on / neutral / yaw-pitch / torque off
+[M5StackChan CoreS3 smoke] LED: lightOn red / lightBlink green / lightRainbow
+(+ muchos "timeout." intercalados — probable bus servo / idle)
 ```
 
 ---
@@ -86,44 +132,65 @@ Llenar cuando llegue el CoreS3 y esté flasheado (Sección B).
 Correr un mod que ejercite BLE + audio + servos + LEDs + display + touch en
 paralelo, durante 5+ min.
 
-- **Mod usado**: `___` (ej: `ai_stackchan`, `chat_audioio`)
-- **Config usada**: `___` (API keys temporales, WiFi, etc.)
+- **Mod usado**:
+  1. `mods/m5stackchan_smoke` — servo + LED (primer boot)
+  2. `mods/fase0_r2` (local) — BLE advertise + LED cycle + head motion + WiFi + cara
+- **Config usada**: `manifest_m5stackchan_cores3.json` (driver `m5stackchan`)
 
-Observado durante ~5 min:
+Observado (~90 s instrumentado + smoke previo + **5 min** serial sin panic):
 
-- [ ] BLE advertising activo (verificar con LightBlue o similar desde iPhone/Mac)
-- [ ] Mic captura audio correctamente
-- [ ] Speaker reproduce sin cortes
-- [ ] Servos responden en tiempo real
-- [ ] LEDs animan en paralelo
-- [ ] Cara sigue renderizando fluido
-- [ ] Touch cabeza responde
-- [ ] Sin reinicios / panics / brownouts
+- [x] BLE advertising activo — Mac/`bleak` ve `buildagotchi-r2`
+  (addr `D3812F91-…`, RSSI ≈ −42…−51 dBm, 26 hits en ~25 s)
+- [ ] Mic captura audio correctamente — *no verificado* (sin mod de audio)
+- [ ] Speaker reproduce sin cortes — *no verificado*
+  (`beacon_advertiser` upstream sin WAVs en `assets/`; crash al cargar)
+- [x] Servos responden en tiempo real — tilt visible en smoke; `fase0_r2` manda
+  poses y/p cada 4 s; pan también en poses serial
+- [x] LEDs animan en paralelo — smoke + ciclo RGB de `fase0_r2` (0 LED errors);
+  confirmado visual por usuario 2026-07-22
+- [x] Cara sigue renderizando fluido — cara visible con WiFi+BLE+servos+LEDs;
+  cabeza en movimiento confirmada visual por usuario 2026-07-22
+- [ ] Touch cabeza responde — *no verificado*
+- [x] Sin reinicios / panics / brownouts (ventana instrumentada)
+- [ ] `robot.button.a` — **ausente** en runtime (`no button.a`); botones físicos
+  del CoreS3 no mapean al API `robot.button` con esta config
 
 **Sorpresas** (todo lo que no esperabas):
 
 ```
-(anotar)
+- PY32 responde (version 0x41) y enciende power de servos.
+- Bus de servos spamea "timeout." durante smoke; la cabeza igual se mueve.
+- `beacon_advertiser` / assets vacíos (.gitkeep) → crash
+  "cannot coerce undefined to object" al usar TTS/speeches.
+- Host debug (`-d`) espera xsbug; para standalone usar release.
+- Instalar mods: hace falta host debug + `xsbug` + `serial2xsbug` + `mcrun -d`.
+- BLE + WiFi + servos + LEDs + display conviven sin derrape en ~90 s+.
 ```
 
 **Techo observado**: ¿hay alguna combinación que definitivamente derrape?
 
 ```
-(anotar)
+Audio duplex (mic+speaker+BLE+WiFi) aún no ejercitado — pendiente de mod con
+assets o TTS local válido. Resto del combo R2 (sin audio) OK.
 ```
 
 ### R7 — Latencia BLE vs WiFi para audio
 
 Medir round-trip PTT → primer chunk audible de respuesta.
 
-- **Método de medición**: `___` (cronómetro, logs, oscilloscopio, etc.)
-- **BLE audio latencia** (si el firmware lo soporta): `___` ms
-- **WiFi HTTP audio latencia**: `___` ms
-- **Veredicto**: ¿BLE es viable para audio o hay que ir por WiFi?
-
-```
-(escribir conclusión)
-```
+- **Método de medición**: no corrido — falta pipeline PTT/STT/TTS con assets/API
+- **BLE audio latencia** (si el firmware lo soporta): *no medido*
+- **WiFi HTTP audio latencia**: *no medido*
+- **BLE para comandos** (proxy de viabilidad): advertising OK a ~−45 dBm a
+  distancia de escritorio; adecuado para UART/comandos (D7), no prueba audio
+- **Veredicto**:
+  ```
+  Audio round-trip BLE vs WiFi: no verificado en esta sesión.
+  Evidencia parcial: BLE stack del S3 anuncia bajo carga (WiFi conectado +
+  servos + LEDs + cara) sin caerse → soporta el diseño "BLE=control,
+  WiFi=audio/media" de ROADMAP. Medir PTT queda para cuando haya TTS local
+  con WAVs o Voicevox/OpenAI configurado.
+  ```
 
 ---
 
@@ -135,29 +202,29 @@ Confirmar contra el inventario que hicimos en la investigación previa
 
 ### Servos
 
-- [ ] Pan (X) responde a `robot.setPose({rotation:{y:...}})`
-- [ ] Tilt (Y) responde a `robot.setPose({rotation:{p:...}})`
-- **Rango real medido**: X: `___`, Y: `___`
-- **Ruido audible / vibración**: `___`
-- **Notas**: `___`
+- [x] Pan (X) responde a `robot.setPose({rotation:{y:...}})` — poses `fase0_r2`
+- [x] Tilt (Y) responde a `robot.setPose({rotation:{p:...}})` — usuario vio bajada
+- **Rango real medido**: X: *no medido formal*, Y: pequeño offset smoke −0.06
+- **Ruido audible / vibración**: *no anotado*
+- **Notas**: muchos `timeout.` de ack SCServo; movimiento igual ocurre
 
 ### Pantalla / cara
 
-- [ ] Renderer `simple-face` funciona
+- [x] Renderer cara funciona (cara visible post-flash)
 - [ ] Todas las emociones cambian: NEUTRAL / HAPPY / SAD / ANGRY / SLEEPY / DOUBTFUL / COLD / HOT
 - [ ] Motions vivos activos (blink, breath, saccade)
 - [ ] Decorators funcionan (heart, sweat, tear, sleepy Z, angry mark)
 - [ ] Speech balloon renderiza texto
 - **Frame rate observado**: `___`
-- **Notas**: `___`
+- **Notas**: cara OK bajo carga R2
 
 ### LEDs (12 RGB)
 
 - [ ] Fila izquierda (0-5) direccionable individualmente
 - [ ] Fila derecha (6-11) direccionable individualmente
-- [ ] `lightOn`, `lightOff`, `lightBlink`, `lightRainbow` funcionan
+- [x] `lightOn`, `lightOff`, `lightBlink`, `lightRainbow` funcionan (smoke + ciclo R2)
 - [ ] Colores se ven fieles a lo especificado
-- **Notas**: `___`
+- **Notas**: smoke MOD + `fase0_r2` lightOn cycle
 
 ### Touch capacitivo cabeza (3 zonas)
 
@@ -195,17 +262,19 @@ Confirmar contra el inventario que hicimos en la investigación previa
 
 ### BLE
 
-- [ ] Advertising visible desde otro dispositivo (LightBlue, nRF Connect)
-- [ ] Conexión establece
-- [ ] Nordic UART Service disponible (o ejemplo equivalente)
-- **RSSI a 1m**: `___`
-- **Notas**: `___`
+- [x] Advertising visible desde Mac (`bleak`) como `buildagotchi` (mod `buildagotchi_ble`)
+- [x] Conexión establece (bleak + `@abandonware/noble`)
+- [x] Nordic UART Service (RX write / TX notify) — hello, hb, state, ack, state_applied
+- **RSSI a ~escritorio**: ≈ −41…−45 dBm
+- **Notas**: ADV solo `completeName` (nombre+UUID128 no caben en 31 B). Scan del
+  bridge por nombre, no por service UUID. `UARTServer` subclass reboot-loopeaba
+  en CoreS3 → usar `BLEServer` directo (host ya incluye `uart` bleservices).
 
 ### WiFi
 
-- [ ] Conecta a la red configurada
-- [ ] HTTP request outbound funciona
-- **Notas**: `___`
+- [x] Conecta a la red configurada (`The Promised WLAN KP` → `10.70.121.164`)
+- [ ] HTTP request outbound funciona — *no verificado explícitamente*
+- **Notas**: credenciales ya estaban en el kit
 
 ### IMU (bonus, si tocaste)
 
@@ -220,38 +289,49 @@ Confirmar contra el inventario que hicimos en la investigación previa
 Notas de lectura del protocolo — cosas que hay que replicar en Moddable en
 Fase 1.
 
-**UUIDs** (Nordic UART Service):
-- Service: `___`
-- TX characteristic (bridge → firmware): `___`
-- RX characteristic (firmware → bridge): `___`
+**UUIDs** (Nordic UART Service — confirmados 2026-07-22 contra
+`claude-desktop-buddy/REFERENCE.md` y Moddable `uartserver.js`):
+- Service: `6e400001-b5a3-f393-e0a9-e50e24dcca9e`
+- RX (bridge → firmware, write): `6e400002-b5a3-f393-e0a9-e50e24dcca9e`
+- TX (firmware → bridge, notify): `6e400003-b5a3-f393-e0a9-e50e24dcca9e`
 
-**Formato de mensajes**:
+**Nota de naming:** en NUS, "RX" es desde el punto de vista del peripheral
+(lo que el central escribe). El bridge escribe en RX y se suscribe a TX.
+
+**Formato de mensajes (buildagotchi D7, no el snapshot de Claude Desktop):**
 
 ```
-(pegar el shape principal del snapshot y de permission)
+{ "v": 1, "seq": N, "t": "hello"|"state"|"state_sync"|"ack"|"state_applied"|"hb"|"event",
+  "ts": <ms>, "p": { ... } }\n
 ```
 
 **Frecuencia**:
-- Snapshot: `___` (cada X segundos o solo en cambios)
-- Keepalive: `___` s
+- Heartbeat bridge↔fw: cada `ble.heartbeatSeconds` (default 5s); 3 misses = dead
+- state: solo en cambio real; state_sync siempre al (re)conectar
 
-**Comandos que el firmware debe soportar**:
+**Advertise name (1B):** `buildagotchi` (prefix filter en NobleTransport)
+
+**Comandos / tipos `t` que el firmware debe soportar:**
 
 ```
-(listar)
+hello, state, state_sync, hb  (inbound)
+ack, state_applied, hb, hello, event  (outbound)
 ```
 
 **Cosas que hay que extender** (D3 event model, D7 seq/ack + heartbeat +
 state_sync, D16 safe mode, D17 error budget, D23 state_applied ack):
 
 ```
-(anotar mientras leés)
+Firmware MOD buildagotchi_ble: aplicar ResolvedState a robot API;
+safe mode SLEEPY a 15s sin tráfico; event touch/button best-effort.
 ```
 
 **Trampas identificadas** (cosas que la spec no cubre bien y hay que decidir):
 
 ```
-(anotar)
+- robot.button.a ausente en CoreS3 con config actual — eventos botón vía otra API.
+- Host debug espera xsbug; release para standalone.
+- Audio assets de mods upstream vacíos — no bloquear 1B.
 ```
 
 ---
@@ -283,7 +363,14 @@ Todo lo que aparezca en Fase 0 que contradiga o refine algo de
 ### Sorpresas encontradas
 
 ```
-(anotar libremente)
+- Target correcto: esp32:./platforms/m5stackchan_cores3 +
+  manifest_m5stackchan_cores3.json (driver m5stackchan, LEDs PY32).
+- No usar -d para smoke standalone: el host debug espera xsbug y no pinta.
+- /dev/cu.usbmodem* del monitor LG se confunde fácil con el CoreS3;
+  filtrar por vid 303A (Espressif).
+- WiFi del kit ya tenía credenciales; conectó a "The Promised WLAN KP"
+  sin configurar en esta sesión.
+- Smoke de servos avanza con rain of "timeout." — investigar bus/IDs.
 ```
 
 ### Decisiones que hay que revisar en DECISIONS.md
@@ -292,7 +379,8 @@ Todo lo que aparezca en Fase 0 que contradiga o refine algo de
 
 ### Riesgos nuevos identificados (candidatos a R9, R10, ...)
 
-- **R___ candidato**: `___`
+- **R___ candidato**: download-mode / USB Serial-JTAG del CoreS3 puede requerir
+  gesto físico; documentar el procedimiento una vez hallado.
 
 ---
 
@@ -306,5 +394,39 @@ Después de completar todo lo anterior, escribir un párrafo corto respondiendo:
 4. **¿Estás listo para arrancar Fase 1?**
 
 ```
-(escribir aquí)
+1. Kit sí: cara, servos (tilt+pan), LEDs, WiFi, BLE advertise bajo carga.
+2. R2 sin audio: OK. Audio/mic/speaker y touch/botones API quedan abiertos.
+3. R7 audio no medido; diseño BLE=control / WiFi=media sigue razonable.
+4. Fase 1B (noble + protocolo) puede arrancar; no bloquear por R7 audio.
+   Medir PTT cuando haya TTS con assets.
 ```
+
+---
+
+## Fase 1B — BLE real (2026-07-22)
+
+### Entregables
+
+| Pieza | Path |
+|---|---|
+| NUS constants | `bridge/src/ble/nus.ts` |
+| NobleTransport | `bridge/src/ble/transport-noble.ts` |
+| Wire run | `bridge/src/index.ts` (`--simulate` → Sim; else Noble) |
+| Firmware MOD | `firmware/mods/buildagotchi_ble/` (+ mirror en `stack-chan/...`) |
+
+### Evidencia hardware
+
+- MOD boot: `[buildagotchi_ble] advertising as buildagotchi` (sin RTC reboot loop).
+- Advertise: `bleak` ve `buildagotchi` ~−43 dBm.
+- Protocolo (bleak → NUS): `hello` ↔ fw hello; `state` → `ack` + `state_applied`
+  para HAPPY / ANGRY / SAD; disconnect arma safe mode (SLEEPY ~15 s).
+- Bridge real: `npx tsx bridge/src/index.ts run --config ./config.yaml` →
+  `noble connected` + `ble link up`; `/health` →
+  `transport.kind=noble, connected=true`.
+- Tests: `vitest` nus + transport-noble → 7 passed.
+
+### Confirmación visual (usuario)
+
+- [x] Cara cambió con los `state` HAPPY/ANGRY/SAD *(ciclo bleak 1B; confirmado usuario)*
+- [x] Tras matar el bridge / desconectar BLE → SLEEPY *(confirmado)*
+- [x] Reiniciar bridge → `state_sync` restaura cara *(confirmado usuario 2026-07-22)*

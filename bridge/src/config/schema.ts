@@ -147,6 +147,8 @@ export const ConfigSchema = z.object({
     .object({
       heartbeatSeconds: z.number().default(5),
       missesBeforeDead: z.number().default(3),
+      /** Advertise name prefix to match when scanning (Fase 1B). */
+      deviceNamePrefix: z.string().default('buildagotchi'),
       reconnectBackoff: z
         .object({
           initial: Duration.default('1s'),

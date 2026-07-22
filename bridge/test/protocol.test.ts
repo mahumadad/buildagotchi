@@ -53,6 +53,26 @@ describe('ProtocolSession', () => {
     vi.useRealTimers();
   });
 
+  it('seeds lastState before connect and state_syncs it after hello', async () => {
+    const transport = new LoopbackTransport();
+    const session = new ProtocolSession(transport, baseCfg(), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics: makeMetrics().metrics,
+      logger: makeLogger(),
+    });
+
+    session.sendState(STATE_B); // link not healthy yet — must not transmit
+    expect(parsedSent(transport).filter((m) => m.t === 'state' || m.t === 'state_sync')).toEqual([]);
+
+    await session.start();
+    await vi.advanceTimersByTimeAsync(10);
+
+    const synced = parsedSent(transport).filter((m) => m.t === 'state_sync');
+    expect(synced).toHaveLength(1);
+    expect(synced[0]?.p).toMatchObject({ emotion: 'HAPPY' });
+  });
+
   it('happy path: sendState -> ack -> state_applied -> latency histogram (offset-corrected)', async () => {
     const transport = new LoopbackTransport({ ackDelayMs: 25, fwClockSkewMs: 4_000 });
     const { metrics, histograms } = makeMetrics();

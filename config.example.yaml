@@ -83,6 +83,7 @@ recorder:
 ble:
   heartbeatSeconds: 5
   missesBeforeDead: 3               # 15s of silence = link dead
+  deviceNamePrefix: buildagotchi   # Fase 1B — scan filter for NUS advertise name
   reconnectBackoff:
     initial: 1s
     max: 10s

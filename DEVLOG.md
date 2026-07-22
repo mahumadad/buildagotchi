@@ -873,16 +873,39 @@ transition hacia Claude con actividad real de input.
 
 ---
 
+## 2026-07-22 — Fase 0 cerrada + Fase 1B BLE real
+
+### Fase 0 (hardware)
+- Toolchain Moddable 8.3.1 + ESP-IDF v6.0 vía `xs-dev`; target
+  `esp32:./platforms/m5stackchan_cores3`.
+- Smoke + R2: cara, servos, LEDs, WiFi, BLE advertise `buildagotchi-r2`, stress
+  5 min sin panic. Audio/PTT diferidos.
+- Evidencia en `NOTES.md` (veredicto Fase 0).
+
+### Fase 1B (M6)
+- Bridge: `NobleTransport` + NUS UUIDs; `--simulate` intacto.
+- Firmware: mod `buildagotchi_ble` (D7 JSON-lines, emotions/LEDs/servo, D16
+  SLEEPY 15 s). `UARTServer` causaba reboot loop → `BLEServer` directo.
+- E2E: noble `ble link up`; caras HAPPY/ANGRY/SAD; SLEEPY al desconectar;
+  `state_sync` al reconectar (confirmado visual).
+- Fixes en sesión: seed+sync post-hello; chunking NUS ≤64 B; MOD vía `BLEServer`
+  (UARTServer reboot-loop en CoreS3).
+
+Plan: `docs/superpowers/plans/2026-07-22-fase-1b-ble-real.md`.
+
+---
+
 ## Pendientes inmediatos
 
-- [ ] Push a GitHub (20 commits ahead de `origin/main`)
+- [ ] Push a GitHub
 - [x] Checklist §8.1 completo (2026-07-10). El paso 11 estaba mal escrito y se
       corrigió en la spec.
 - [ ] Fase 3 (Calendar → GitHub → Jira). El OAuth de los MCP necesita una sesión
       interactiva.
-- [ ] Fase 0: ejecutar cuando llegue el hardware (NOTES.md tiene el template)
-- [ ] Fase 1B: BLE real con noble + CoreS3
+- [x] Fase 0: kit validado (NOTES.md)
+- [x] Fase 1B: BLE real con noble + CoreS3 (OK visual 2026-07-22)
 - [ ] Gate 1: 3 semanas de uso real del MVP (criterios en ROADMAP.md)
+- [ ] Balloon en firmware (cara muestra texto del evento)
 
 [DEBT.md](DEBT.md) queda con varias entradas abiertas: D-03 (decisión pendiente
 sobre `pulse`), D-10 (medición de latencia del firmware), D-12 (trust-check), D-13

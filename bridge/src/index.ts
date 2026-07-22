@@ -9,6 +9,7 @@ import {
   secondsSinceLastInput,
 } from './adapters/trust-check.js';
 import { ProtocolSession } from './ble/protocol.js';
+import { NobleTransport } from './ble/transport-noble.js';
 import { SimTransport } from './ble/transport-sim.js';
 import { parseArgs } from './cli.js';
 import { ConfigLoader } from './config/loader.js';
@@ -17,8 +18,8 @@ import { BalloonHistory } from './core/balloon-history.js';
 import { EventBus } from './core/bus.js';
 import { ContextPressureMonitor } from './core/context-pressure.js';
 import { type Adapter, type Event, newEvent } from './core/events.js';
-import { registerShutdown } from './core/lifecycle.js';
 import { LifeStats } from './core/life-stats.js';
+import { registerShutdown } from './core/lifecycle.js';
 import { ScreenView } from './core/screen-view.js';
 import { StateMachine } from './core/state-machine.js';
 import { TokenStats } from './core/token-stats.js';
@@ -37,12 +38,10 @@ const logger = pino({ name: 'bridge' });
  * config → metrics → recorder → bus (recorder hook) → AM → state machine →
  * transport → server → adapters → registerShutdown.
  *
- * The BLE transport is real under `--simulate`: `ProtocolSession` over
- * `SimTransport`, which answers hello/ack/state_applied. Handshake, heartbeat,
- * retry, reconnect backoff, safe mode and the latency histogram are all the same
- * code the CoreS3 will run against — only the peer is synthetic. Without
- * `--simulate` there is no transport at all, because no real one exists yet, and
- * the dashboard is the only display.
+ * Under `--simulate`, `ProtocolSession` runs over `SimTransport` (synthetic
+ * hello/ack/state_applied). Without `--simulate`, Fase 1B uses `NobleTransport`
+ * against a CoreS3 advertising Nordic UART as `buildagotchi*`. Handshake,
+ * heartbeat, retry, reconnect and safe mode are the same code either way.
  */
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
@@ -112,18 +111,24 @@ async function main(): Promise<void> {
         if (e.source === 'claude' && !e.payload.replayedFrom) {
           const result = lifeStats.markActive();
           if (result.crossedMilestone) {
-            bus.publish(newEvent({
-              source: 'life',
-              category: 'life_milestone',
-              severity: 'ambient',
-              payload: { streak: result.streak },
-            }));
+            bus.publish(
+              newEvent({
+                source: 'life',
+                category: 'life_milestone',
+                severity: 'ambient',
+                payload: { streak: result.streak },
+              }),
+            );
           }
         }
 
         // Life stats: count permission resolutions from the hook path.
         // 'external': the bus event carries no head/button signal.
-        if (e.source === 'claude' && e.category === 'permission_resolved' && !e.payload.replayedFrom) {
+        if (
+          e.source === 'claude' &&
+          e.category === 'permission_resolved' &&
+          !e.payload.replayedFrom
+        ) {
           const action = e.payload.action;
           if (action === 'approved') {
             lifeStats.recordResolution('approved', 'external');
@@ -267,7 +272,7 @@ async function main(): Promise<void> {
     getHealth: () => ({
       adapters: Object.fromEntries(adapters.map((a) => [a.name, a.health()])),
       transport: {
-        kind: session ? 'sim' : 'none',
+        kind: session ? (simulate ? 'sim' : 'noble') : 'none',
         connected: session?.linkHealthy() ?? false,
         reconnects: 0,
         latency: { p50: 0, p95: 0 },
@@ -295,11 +300,11 @@ async function main(): Promise<void> {
     );
   });
 
-  if (simulate) {
-    // The firmware doesn't exist yet, so `SimTransport` answers hello/ack/
-    // state_applied. Everything above it — handshake, heartbeat, retry, safe
-    // mode, the latency histogram — is the same code the CoreS3 will run against.
-    session = new ProtocolSession(new SimTransport(), config.ble, {
+  {
+    const transport = simulate
+      ? new SimTransport()
+      : new NobleTransport({ deviceNamePrefix: config.ble.deviceNamePrefix });
+    session = new ProtocolSession(transport, config.ble, {
       onInboundEvent: (kind, detail) => server.handleDeviceInput(kind, detail),
       onLinkChange: (healthy) => {
         logger.warn({ healthy }, healthy ? 'ble link up' : 'ble link dead');
@@ -317,7 +322,12 @@ async function main(): Promise<void> {
 
   attentionManager.start();
   await server.start();
-  if (session) await session.start();
+  if (session) {
+    // Seed before connect so start()'s post-hello state_sync wakes the face
+    // out of firmware D16 SLEEPY (idle NEUTRAL may never emit a transition).
+    session.sendState(stateMachine.current());
+    await session.start();
+  }
   logger.info({ host: config.server.host, port: config.server.port }, 'bridge listening');
 
   // D22. Writes to the recorder, not the bus: it is telemetry about the user,
