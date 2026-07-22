@@ -47,6 +47,7 @@ class BuildagotchiServer extends BLEServer {
     this.rxBuffer = ''
     this.outSeq = 1
     this.safeTimer = null
+    this.lastBalloon = null
   }
 
   onReady() {
@@ -133,14 +134,8 @@ class BuildagotchiServer extends BLEServer {
     if (state == null || typeof state !== 'object') return
     const robot = this.robot
     try {
-      // Clear TTS/balloon leftovers that can leave a half-drawn face.
       try {
         robot.setMouthOpen(0)
-      } catch (_e) {
-        /* ignore */
-      }
-      try {
-        robot.hideBalloon()
       } catch (_e) {
         /* ignore */
       }
@@ -172,6 +167,30 @@ class BuildagotchiServer extends BLEServer {
     } catch (e) {
       trace(`[buildagotchi_ble] leds error ${e}\n`)
     }
+
+    try {
+      // `balloon` omitted → leave as-is; string (incl. "") → show/hide.
+      if ('balloon' in state) {
+        this.applyBalloon(robot, state.balloon)
+      }
+    } catch (e) {
+      trace(`[buildagotchi_ble] balloon error ${e}\n`)
+    }
+  }
+
+  applyBalloon(robot, balloon) {
+    const text = typeof balloon === 'string' ? balloon : ''
+    if (text === this.lastBalloon) return
+    this.lastBalloon = text
+    if (text.length === 0) {
+      robot.hideBalloon()
+      trace('[buildagotchi_ble] balloon hide\n')
+      return
+    }
+    // Match emulator margins (balloon-layout / speech-balloon defaults).
+    // Omit width so the 9-slice sizes to the wrapped text.
+    robot.showBalloon(text, { left: 16, right: 16, top: 6 })
+    trace(`[buildagotchi_ble] balloon ${text.length}c\n`)
   }
 
   applyLeds(robot, leds) {
@@ -199,6 +218,7 @@ class BuildagotchiServer extends BLEServer {
     try {
       this.robot.setEmotion(EMOTIONS.SLEEPY)
       this.robot.lightOff('head')
+      this.applyBalloon(this.robot, '')
     } catch (_e) {
       /* ignore */
     }

@@ -905,7 +905,7 @@ Plan: `docs/superpowers/plans/2026-07-22-fase-1b-ble-real.md`.
 - [x] Fase 0: kit validado (NOTES.md)
 - [x] Fase 1B: BLE real con noble + CoreS3 (OK visual 2026-07-22)
 - [ ] Gate 1: 3 semanas de uso real del MVP (criterios en ROADMAP.md)
-- [ ] Balloon en firmware (cara muestra texto del evento)
+- [x] Balloon en firmware (`ResolvedState.balloon` → `showBalloon`, OK visual)
 
 [DEBT.md](DEBT.md) queda con varias entradas abiertas: D-03 (decisión pendiente
 sobre `pulse`), D-10 (medición de latencia del firmware), D-12 (trust-check), D-13

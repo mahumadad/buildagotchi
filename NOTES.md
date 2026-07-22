@@ -214,7 +214,7 @@ Confirmar contra el inventario que hicimos en la investigación previa
 - [ ] Todas las emociones cambian: NEUTRAL / HAPPY / SAD / ANGRY / SLEEPY / DOUBTFUL / COLD / HOT
 - [ ] Motions vivos activos (blink, breath, saccade)
 - [ ] Decorators funcionan (heart, sweat, tear, sleepy Z, angry mark)
-- [ ] Speech balloon renderiza texto
+- [x] Speech balloon renderiza texto *(MOD `showBalloon` desde `ResolvedState.balloon`, 2026-07-22)*
 - **Frame rate observado**: `___`
 - **Notas**: cara OK bajo carga R2
 
