@@ -3,6 +3,7 @@
  * Uses BLEServer directly (UARTServer subclass was reboot-looping on CoreS3).
  * Host already includes uart bleservices via manifest_service.json.
  */
+import { SimpleFace } from 'behaviors/face'
 import BLEServer from 'bleserver'
 import Timer from 'timer'
 
@@ -48,6 +49,7 @@ class BuildagotchiServer extends BLEServer {
     this.outSeq = 1
     this.safeTimer = null
     this.lastBalloon = null
+    this.faceDirty = true
   }
 
   onReady() {
@@ -59,7 +61,23 @@ class BuildagotchiServer extends BLEServer {
   onConnected() {
     this.stopAdvertising()
     this.armSafeMode()
+    // Servo timeout storms can leave one eyelid Contour stale; remount face.
+    this.remountFace()
     trace('[buildagotchi_ble] connected\n')
+  }
+
+  remountFace() {
+    try {
+      const renderer = this.robot.renderer
+      if (renderer && typeof renderer.setFace === 'function') {
+        renderer.setFace(new SimpleFace({}))
+        this.faceDirty = false
+        this.lastBalloon = null
+        trace('[buildagotchi_ble] face remounted\n')
+      }
+    } catch (e) {
+      trace(`[buildagotchi_ble] face remount error ${e}\n`)
+    }
   }
 
   onDisconnected() {
@@ -140,6 +158,9 @@ class BuildagotchiServer extends BLEServer {
         /* ignore */
       }
       if (typeof state.emotion === 'string' && EMOTIONS[state.emotion]) {
+        if (this.faceDirty && state.emotion !== 'SLEEPY') {
+          this.remountFace()
+        }
         robot.setEmotion(EMOTIONS[state.emotion])
         trace(`[buildagotchi_ble] emotion ${state.emotion}\n`)
       }
@@ -219,6 +240,7 @@ class BuildagotchiServer extends BLEServer {
       this.robot.setEmotion(EMOTIONS.SLEEPY)
       this.robot.lightOff('head')
       this.applyBalloon(this.robot, '')
+      this.faceDirty = true
     } catch (_e) {
       /* ignore */
     }
