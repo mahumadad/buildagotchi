@@ -477,6 +477,10 @@ class BuildagotchiServer extends BLEServer {
     this.balloonArrow = null
     this.balloonMarqueeTimer = null
     this.faceDirty = true
+    // --- D-03 pulse smoke test (throwaway) ---
+    this.pulseTimer = null
+    this.pulseDemoActive = false
+    // --- end D-03 ---
     /** Outbound event lines queued until CCCD notify is enabled. */
     this.pendingOut = []
   }
@@ -753,7 +757,55 @@ class BuildagotchiServer extends BLEServer {
     )
   }
 
+  // --- D-03 pulse smoke test (throwaway) ---
+  // Head LED on CoreS3 is a PY32Led (12 RGB), driven by on()/#fill+refreshLeds()
+  // — NOT NeoStrand, so led-pulse.ts's setScheme path doesn't apply here. Manual
+  // breathing: vary brightness with a raised cosine (breath.ts curve) at 100ms.
+  // Guards applyLeds for ~21s so the bridge's LED commands don't stomp the demo.
+  startPulseDemo() {
+    const led = this.robot.led && this.robot.led.head
+    if (!led) {
+      trace('[buildagotchi_ble] pulse demo: no head led\n')
+      return
+    }
+    trace('[buildagotchi_ble] pulse demo: start (RED marker then breathe)\n')
+    this.pulseDemoActive = true
+    // Hardware sanity first: solid RED for 1s. If no red appears, the problem is
+    // the LED/getter — not the breathing curve. Also a visual "new build" marker.
+    this.robot.lightOn('head', 255, 0, 0)
+    const dur = 2000
+    const rgb = [180, 40, 200] // magenta, distinct from the red marker
+    let t = 0
+    if (this.pulseTimer != null) Timer.clear(this.pulseTimer)
+    // Start the breathing after the 1s red marker.
+    Timer.set(() => {
+      this.pulseTimer = Timer.repeat(() => {
+        const phase = (2 * Math.PI * (t % dur)) / dur
+        const k = (1 - Math.cos(phase)) / 2
+        led.on(Math.round(rgb[0] * k), Math.round(rgb[1] * k), Math.round(rgb[2] * k))
+        t += 100
+      }, 100)
+    }, 1000)
+    Timer.set(() => this.stopPulseDemo(), 21000)
+  }
+
+  stopPulseDemo() {
+    if (this.pulseTimer != null) {
+      Timer.clear(this.pulseTimer)
+      this.pulseTimer = null
+    }
+    this.pulseDemoActive = false
+    trace('[buildagotchi_ble] pulse demo: stop\n')
+    try {
+      this.robot.lightOff('head')
+    } catch (_e) {
+      /* ignore */
+    }
+  }
+  // --- end D-03 ---
+
   applyLeds(robot, leds) {
+    if (this.pulseDemoActive) return // D-03 throwaway: keep the demo uninterrupted
     if (leds.length === 0) {
       robot.lightOff('head')
       return
@@ -847,21 +899,41 @@ function setupTouch(server, robot) {
     trace(`[buildagotchi_ble] touch configure error ${e}\n`)
   }
   let sawNonZero = false
-  panel.onSample = (sample, _ticks) => {
-    if (sawNonZero) return
+  let lastSampleEmit = 0
+  panel.onSample = (sample, ticks) => {
+    let active = false
     for (let i = 0; i < sample.length; i++) {
       if (sample[i] > 0) {
-        sawNonZero = true
-        trace(`[buildagotchi_ble] touch FIRST non-zero ${JSON.stringify(sample)}\n`)
-        return
+        active = true
+        break
       }
     }
+    if (!active) return
+    if (!sawNonZero) {
+      sawNonZero = true
+      trace(`[buildagotchi_ble] touch FIRST non-zero ${JSON.stringify(sample)}\n`)
+    }
+    // Throttled zone dump for head-touch tests: [front, middle, back] 0..3
+    const t = typeof ticks === 'number' ? ticks : 0
+    if (t - lastSampleEmit < 200) return
+    lastSampleEmit = t
+    trace(`[buildagotchi_ble] zones ${JSON.stringify(sample)}\n`)
+    server.send('event', {
+      kind: 'touch',
+      detail: {
+        gesture: 'sample',
+        zones: [sample[0] || 0, sample[1] || 0, sample[2] || 0],
+      },
+    })
   }
   panel.onGesture = (gesture) => {
     const type = gesture.type
     if (typeof type !== 'string') return
     trace(`[buildagotchi_ble] gesture ${type}\n`)
     server.emitTouch(type)
+    // --- D-03 pulse smoke test (throwaway): a backward swipe kicks the demo ---
+    if (type === 'backwardSwipe') server.startPulseDemo()
+    // --- end D-03 ---
     if (type === 'forwardSwipe') lastFwd = gesture.ticks
     else if (type === 'backwardSwipe') lastBwd = gesture.ticks
     if (
@@ -912,6 +984,10 @@ export function onRobotCreated(robot) {
     const server = new BuildagotchiServer(robot)
     setupTouch(server, robot)
     setupButtons(server, robot)
+    // --- D-03 pulse smoke test (throwaway): auto-fire once ~2.5s after boot so
+    // we don't depend on the swipe gesture. RED marker confirms the new build. ---
+    Timer.set(() => server.startPulseDemo(), 2500)
+    // --- end D-03 ---
   } catch (e) {
     trace(`[buildagotchi_ble] BLE error ${e}\n`)
   }

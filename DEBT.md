@@ -103,12 +103,25 @@ display"— no se puede calcular hoy.
 histograma empieza a llenarse... en memoria, muriendo en cada reinicio. Igual que
 antes, el Gate 1 quiere p95 sobre tres semanas.
 
-**Fix**: cuando Fase 1B conecte el transporte, `#handleStateApplied` debe grabar
-una línea en el recorder además de observar el histograma, y correlacionarla con
-el `state_change` por `eventId` — hoy el envelope no lo lleva. Sumar las dos
-patas se hace offline.
+**Fix implementado (2026-07-22)**: `#handleStateApplied` ahora graba una línea
+`state_change` con `leg: 'firmware'` además de observar el histograma. El
+`eventId` que disparó el estado se propaga `emit → sendState → seq→eventId map`,
+y `state_applied` (que solo trae `ack_seq`) lo resuelve por ese map (bounded a 32,
+sigue al retry sobre su nuevo seq). Sumar las dos patas —join con la línea
+bridge-leg por `eventId`— se hace offline. Cubierto por 3 tests nuevos en
+`protocol.test.ts`.
 
-**Costo**: ~1 h, dentro de Fase 1B. No antes: no hay forma de verificarlo.
+**Verificado en hardware (2026-07-22)**: bridge sobre `NobleTransport` conectado al
+CoreS3, evento `error` inyectado por `POST /events` → cara ANGRY. Ambas patas
+grabaron con el MISMO `eventId`: bridge-leg `latencyMs: 1` (evento→ResolvedState),
+firmware-leg `leg:'firmware' latencyMs: 283` (bridge→display). Histograma
+`state_latency_ms` p50 283 / p95 305. Presupuesto D23 completo para ese evento ≈284 ms.
+
+**Qué falta**: el p95 real del Gate 1 son tres semanas de datos, no las 3 muestras
+de esta verificación. El código y el pipeline de grabado ya están probados; queda
+acumular la muestra en uso diario.
+
+**Costo**: hecho y verificado.
 
 ---
 
@@ -200,25 +213,27 @@ Moddable/Piu cuando llegue el CoreS3 (D29).
 
 ---
 
-## D-17 — `pet` gesture y micro-expresión idle no validados en hardware (C7)
+## D-17 — `pet` (fwd+bwd ≤800ms) casi no se dispara en hardware real
 
-**Dónde**: `server.ts` (`head_pet` desde `gesture: 'pet'`), `idle-expression.mjs`.
+**Dónde**: `firmware/mods/buildagotchi_ble/mod.js` (`PET_WINDOW_MS = 800`,
+fwd+bwd → `pet`); bridge `head_pet` / idle-expression.
 
-**Qué**: el gesto `pet` y la micro-expresión idle se ejercen sólo contra el
-emulador. El firmware factory distingue una caricia y corre un IdleExpression
-device-side, pero **no está confirmado** qué gestos reporta el touch real del
-CoreS3 ni cómo se mapea la caricia.
+**Qué**: validado 2026-07-22 en CoreS3. `press`/`release` y swipes unidireccionales
+llegan bien por BLE. El `pet` sintetizado (forwardSwipe + backwardSwipe en
+≤800 ms) **no se logró disparar** en varias rondas: el Si12T suele reportar solo
+una dirección por stroke (casi siempre `backwardSwipe`; `forwardSwipe` aparece
+poco). Intensidad/zona fina en taps tampoco es usable (mucho `3/3/3`).
 
-**Por qué no explota hoy**: sin hardware, el emulador es la única superficie;
-el gesto se dispara desde `/sim/touch`.
+**Por qué no explota hoy**: Gate 1 (aprobar permiso) usa tap = `press`/`release`.
+`head_pet` sigue siendo nice-to-have / emulador.
 
-**Qué lo haría explotar**: al integrar el touch real (Fase 0), si el hardware
-no distingue una caricia de un swipe, `head_pet` nunca se emitiría desde el
-robot y la reacción quedaría emulador-only de forma permanente.
+**Qué lo haría explotar**: reacciones de caricia en uso diario nunca llegan desde
+el robot; solo desde `/sim/touch`.
 
-**Costo del fix**: verificar en Fase 0 los gestos del touch panel y, si hace
-falta, derivar `pet` de un patrón temporal (varios toques suaves) en el
-firmware. Bajo, pero bloqueado por hardware.
+**Fix (backlog)**: aflojar ventana / aceptar un solo swipe como caricia; o
+derivar `pet` de otro patrón (p. ej. hold suave en BACK). No bloquea Gate 1.
+
+**Costo**: bajo–medio; no urgente.
 
 ---
 

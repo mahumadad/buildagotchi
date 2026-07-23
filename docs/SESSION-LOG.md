@@ -44,10 +44,13 @@ Touch cabeza → eventos al bridge (Gate 1).
 ### Evidencia E2E
 - Serial: `gesture press` / `release` + FIRST non-zero `[3,3,0]`.
 - BLE: `event` `{kind:touch, detail:{gesture:press|release}}` (flush de cola).
+- Retest estructurado: taps OK (press/release); zonas/intensidad poco discriminantes;
+  pets: 0 (solo `backwardSwipe` en strokes). → backlog **D-17**.
 
 ### Siguiente
-- Commit touch MOD; probar con bridge real (tap aprueba permiso).
+- Probar con bridge real (tap aprueba permiso).
 - Gate 1 uso diario.
+- Pet/`head_pet` fiable: D-17 (no bloquea).
 
 ## 2026-07-22 (noche) — balloon abajo
 
