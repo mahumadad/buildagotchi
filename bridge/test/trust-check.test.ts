@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TrustCheckAdapter } from '../src/adapters/trust-check.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TrustCheckMonitor, _resetInputCache } from '../src/adapters/trust-check.js';
 import type { Emotion } from '../src/core/events.js';
 
 /**
@@ -21,7 +21,7 @@ function harness(opts: { emotion?: Emotion; secondsSinceLastInput?: number | nul
   let emotion: Emotion = opts.emotion ?? 'NEUTRAL';
   const recorded: Record<string, unknown>[] = [];
 
-  const adapter = new TrustCheckAdapter({
+  const adapter = new TrustCheckMonitor({
     watchedBundleId: 'com.anthropic.claudefordesktop',
     frontmostBundleId: () => front,
     currentEmotion: () => emotion,
@@ -53,7 +53,7 @@ const CLAUDE = 'com.anthropic.claudefordesktop';
 const OTHER = 'com.apple.Safari';
 const THIRTY_ONE_SECONDS = 31_000;
 
-describe('TrustCheckAdapter (D22)', () => {
+describe('TrustCheckMonitor (D22)', () => {
   let h: ReturnType<typeof harness>;
 
   beforeEach(() => {
@@ -188,5 +188,27 @@ describe('TrustCheckAdapter (D22)', () => {
     h.adapter.poll();
 
     expect(h.count).toBe(1);
+  });
+});
+
+describe('secondsSinceLastInput cache', () => {
+  afterEach(() => _resetInputCache());
+
+  it('caches the result and avoids repeated fork+exec within the TTL', async () => {
+    const { secondsSinceLastInput } = await import('../src/adapters/trust-check.js');
+    _resetInputCache();
+    if (process.platform !== 'darwin') return;
+
+    const t0 = performance.now();
+    const first = secondsSinceLastInput();
+    const second = secondsSinceLastInput();
+    const third = secondsSinceLastInput();
+    const elapsed = performance.now() - t0;
+
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+    // Three calls should be nearly free (one fork, two cache hits).
+    // Without the cache, three python3 forks take ~100-300ms each.
+    expect(elapsed).toBeLessThan(500);
   });
 });

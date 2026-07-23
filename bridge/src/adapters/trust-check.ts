@@ -46,7 +46,7 @@ export interface TrustCheckDeps {
  * The burn-in of the first 3 days is a query-time concern, not a runtime one —
  * the lines are written from day 0 and discarded when Gate 1 is evaluated.
  */
-export class TrustCheckAdapter {
+export class TrustCheckMonitor {
   readonly name = 'trust-check';
 
   #deps: TrustCheckDeps;
@@ -144,8 +144,15 @@ export function readFrontmostBundleId(): string | null {
  * preserves the pre-D12 behavior: count every focus transition that passes the
  * other filters.
  */
+let _cachedInputResult: { value: number | null; at: number } | null = null;
+const INPUT_CACHE_TTL_MS = 3_000;
+
 export function secondsSinceLastInput(): number | null {
   if (process.platform !== 'darwin') return null;
+  const now = Date.now();
+  if (_cachedInputResult && now - _cachedInputResult.at < INPUT_CACHE_TTL_MS) {
+    return _cachedInputResult.value;
+  }
   const script = `import ctypes, ctypes.util
 cg = ctypes.CDLL(ctypes.util.find_library('CoreGraphics'))
 state = 0  # kCGEventSourceStateCombinedSessionState
@@ -164,9 +171,16 @@ print(min_secs)
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
     const n = Number(out);
-    return Number.isFinite(n) && n >= 0 ? n : null;
+    const value = Number.isFinite(n) && n >= 0 ? n : null;
+    _cachedInputResult = { value, at: now };
+    return value;
   } catch (err) {
     logger.debug({ err }, 'could not read last input time');
+    _cachedInputResult = { value: null, at: now };
     return null;
   }
+}
+
+export function _resetInputCache(): void {
+  _cachedInputResult = null;
 }

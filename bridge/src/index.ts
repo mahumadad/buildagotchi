@@ -4,7 +4,7 @@ import { ClaudeAdapter } from './adapters/claude-adapter.js';
 import { DemoAdapter } from './adapters/demo.js';
 import {
   CLAUDE_DESKTOP_BUNDLE_ID,
-  TrustCheckAdapter,
+  TrustCheckMonitor,
   readFrontmostBundleId,
   secondsSinceLastInput,
 } from './adapters/trust-check.js';
@@ -332,7 +332,7 @@ async function main(): Promise<void> {
 
   // D22. Writes to the recorder, not the bus: it is telemetry about the user,
   // and an event the robot reacted to would perturb the very state it samples.
-  const trustCheck = new TrustCheckAdapter({
+  const trustCheck = new TrustCheckMonitor({
     watchedBundleId: CLAUDE_DESKTOP_BUNDLE_ID,
     frontmostBundleId: readFrontmostBundleId,
     currentEmotion: () => stateMachine.current().emotion,
