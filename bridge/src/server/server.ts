@@ -34,6 +34,7 @@ import { TOKEN_ACCOUNT, TOKEN_SERVICE } from '../platform/platform.js';
 import type { Platform } from '../platform/platform.js';
 import { type EventRecorder, localDateString } from '../recorder/recorder.js';
 import { type ReplayResult, replay } from '../recorder/replay.js';
+import { GestureRecognizer } from './gesture-recognizer.js';
 import type { Metrics } from './metrics.js';
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1MB (SPEC-IMPL-FASE-1A §5.3)
@@ -214,17 +215,16 @@ export class BridgeServer {
   #sseClients = new Set<ServerResponse>();
   #sseKeepAlive: NodeJS.Timeout | null = null;
   #lastHeadTapAt = 0;
+  #lastHeadTapSessionId: string | null = null;
   #DOUBLE_TAP_WINDOW_MS = 700;
-  #headTouchState: 'idle' | 'pressed' | 'hold-fired' = 'idle';
-  #pressStartAt = 0;
-  #holdTimer: NodeJS.Timeout | null = null;
-  #TAP_MS = 300;
-  #HOLD_MS = 2000;
+  #gesture: GestureRecognizer;
 
   constructor(opts: BridgeServerOptions) {
     this.#opts = opts;
     this.#bucket = new TokenBucket(opts.rateLimitPerMinute);
     this.#hookBucket = new TokenBucket(120);
+    this.#gesture = new GestureRecognizer();
+    this.#gesture.onAction = (action) => this.#handleGestureAction(action);
     // Registered up-front so /metrics exposes it at zero even before the first rejection.
     opts.metrics.counter('external_events_rejected_total', ['reason']);
     this.#server = createServer((req, res) => {
@@ -313,6 +313,27 @@ export class BridgeServer {
   #broadcast(type: 'state' | 'event' | 'health' | 'session', payload: unknown): void {
     const line = `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
     for (const client of this.#sseClients) client.write(line);
+  }
+
+  #parseJsonBody(body: { data: string }, res: ServerResponse): unknown | null {
+    try {
+      return JSON.parse(body.data);
+    } catch {
+      sendJson(res, 400, { error: 'invalid JSON' });
+      return null;
+    }
+  }
+
+  #requireSimulation(res: ServerResponse): boolean {
+    if (this.#opts.simulate) return true;
+    sendJson(res, 403, { error: 'simulation endpoints disabled in production' });
+    return false;
+  }
+
+  #requireClaudeAdapter(res: ServerResponse): ClaudeAdapter | null {
+    if (this.#opts.claudeAdapter) return this.#opts.claudeAdapter;
+    sendJson(res, 404, { error: 'claude adapter not configured' });
+    return null;
   }
 
   async #handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -452,12 +473,9 @@ export class BridgeServer {
     }
     let parsed: { file?: unknown; lastN?: unknown; instant?: unknown } = {};
     if (body.data.length > 0) {
-      try {
-        parsed = JSON.parse(body.data);
-      } catch {
-        sendJson(res, 400, { error: 'invalid JSON' });
-        return;
-      }
+      const result = this.#parseJsonBody(body, res);
+      if (result === null) return;
+      parsed = result as { file?: unknown; lastN?: unknown; instant?: unknown };
     }
 
     const recorderDir = this.#opts.recorder.dir;
@@ -582,10 +600,8 @@ export class BridgeServer {
   }
 
   async #handleHookClaude(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!this.#opts.claudeAdapter) {
-      sendJson(res, 404, { error: 'claude adapter not configured' });
-      return;
-    }
+    const claude = this.#requireClaudeAdapter(res);
+    if (!claude) return;
     if (!this.#hookBucket.tryTake()) {
       sendJson(res, 429, { error: 'rate limit exceeded' });
       return;
@@ -595,18 +611,13 @@ export class BridgeServer {
       sendJson(res, 413, { error: 'payload too large' });
       return;
     }
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(body.data);
-    } catch {
-      sendJson(res, 400, { error: 'invalid JSON' });
-      return;
-    }
+    const parsed = this.#parseJsonBody(body, res) as Record<string, unknown> | null;
+    if (parsed === null) return;
     if (typeof parsed.hook_event_name !== 'string' || typeof parsed.session_id !== 'string') {
       sendJson(res, 400, { error: 'missing hook_event_name or session_id' });
       return;
     }
-    this.#opts.claudeAdapter.handleHookEvent(parsed);
+    claude.handleHookEvent(parsed);
     sendJson(res, 202, { ok: true });
   }
 
@@ -616,10 +627,8 @@ export class BridgeServer {
       sendJson(res, authError.status, authError.body);
       return;
     }
-    if (!this.#opts.claudeAdapter) {
-      sendJson(res, 404, { error: 'claude adapter not configured' });
-      return;
-    }
+    const claude = this.#requireClaudeAdapter(res);
+    if (!claude) return;
     const sessionId = path.slice('/approve/'.length);
     if (!sessionId) {
       sendJson(res, 400, { error: 'missing session ID' });
@@ -630,20 +639,15 @@ export class BridgeServer {
       sendJson(res, 413, { error: 'payload too large' });
       return;
     }
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(body.data);
-    } catch {
-      sendJson(res, 400, { error: 'invalid JSON' });
-      return;
-    }
+    const parsed = this.#parseJsonBody(body, res) as Record<string, unknown> | null;
+    if (parsed === null) return;
     const action = parsed.action;
     if (action !== 'approve' && action !== 'deny') {
       sendJson(res, 400, { error: 'action must be approve or deny' });
       return;
     }
     const mapped = action === 'approve' ? 'approved' : 'denied';
-    const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, mapped);
+    const eventId = claude.resolvePermission(sessionId, mapped);
     if (eventId) {
       this.#opts.attentionManager.resolve(
         eventId,
@@ -652,7 +656,7 @@ export class BridgeServer {
       );
       this.#opts.lifeStats?.recordResolution(mapped, 'dashboard');
       if (action === 'approve') {
-        const session = this.#opts.claudeAdapter.sessions().get(sessionId);
+        const session = claude.sessions().get(sessionId);
         if (session?.cwd) focusTerminal(session.cwd, this.#opts.logger);
       }
       sendJson(res, 200, { resolved: true });
@@ -667,16 +671,14 @@ export class BridgeServer {
       sendJson(res, authError.status, authError.body);
       return;
     }
-    if (!this.#opts.claudeAdapter) {
-      sendJson(res, 404, { error: 'claude adapter not configured' });
-      return;
-    }
+    const claude = this.#requireClaudeAdapter(res);
+    if (!claude) return;
     const sessionId = path.slice('/focus/'.length);
     if (!sessionId) {
       sendJson(res, 400, { error: 'missing session ID' });
       return;
     }
-    const session = this.#opts.claudeAdapter.sessions().get(sessionId);
+    const session = claude.sessions().get(sessionId);
     if (!session?.cwd) {
       sendJson(res, 404, { error: 'session not found' });
       return;
@@ -703,9 +705,6 @@ export class BridgeServer {
       if (button !== 'A' && button !== 'B') return;
       const action = button === 'A' ? 'approve' : 'deny';
       if (this.#resolveFirstPendingPermission(action, 'button')) return;
-      // Nothing to approve, so the buttons navigate — the precedent in
-      // claude-desktop-buddy cycles the view with one button and the page with
-      // another. This replaces a `button_pressed` event that nobody consumed.
       if (this.#opts.screenView) {
         if (button === 'A') this.#opts.screenView.nextView();
         else this.#opts.screenView.nextPage();
@@ -716,53 +715,38 @@ export class BridgeServer {
 
     const gesture = (detail as { gesture?: unknown })?.gesture;
     if (typeof gesture !== 'string') return;
+    this.#gesture.input(gesture);
+  }
 
-    if (gesture === 'press') {
-      this.#pressStartAt = Date.now();
-      this.#headTouchState = 'pressed';
-      if (this.#holdTimer) clearTimeout(this.#holdTimer);
-      this.#holdTimer = setTimeout(() => {
-        this.#headTouchState = 'hold-fired';
-        this.#holdTimer = null;
+  #handleGestureAction(action: import('./gesture-recognizer.js').GestureAction): void {
+    switch (action.type) {
+      case 'hold':
         this.#opts.attentionManager.setMode('SLEEP');
         this.#opts.stateMachine.apply(this.#opts.attentionManager.snapshot().active);
         this.notifyState();
-      }, this.#HOLD_MS);
-      return;
-    }
-
-    if (gesture === 'release') {
-      if (this.#holdTimer) {
-        clearTimeout(this.#holdTimer);
-        this.#holdTimer = null;
-      }
-      const duration = Date.now() - this.#pressStartAt;
-      if (this.#headTouchState === 'hold-fired') {
-        // The hold timer already handled the SLEEP transition; just reset.
-        this.#headTouchState = 'idle';
         return;
-      }
-      this.#headTouchState = 'idle';
-      if (duration <= this.#TAP_MS) {
+
+      case 'tap': {
         const result = this.#resolveHeadTap();
         if (result.consumed) return;
-        // No permission pending: a head tap nudges the user to the terminal if
-        // there's an unanswered AskUserQuestion (Part 2 of decisiones interactivas).
         if (this.#focusPendingQuestion()) return;
+        return;
       }
-      return;
-    }
 
-    if (gesture === 'forwardSwipe' || gesture === 'backwardSwipe' || gesture === 'pet') {
-      this.#opts.bus.publish(
-        newEvent({
-          source: 'firmware',
-          category: gesture === 'pet' ? 'head_pet' : 'touch_head',
-          severity: 'low',
-          payload: { gesture },
-        }),
-      );
-      return;
+      case 'pet':
+      case 'swipe':
+        this.#opts.bus.publish(
+          newEvent({
+            source: 'firmware',
+            category: action.type === 'pet' ? 'head_pet' : 'touch_head',
+            severity: 'low',
+            payload: {
+              gesture: action.type === 'pet' ? 'pet'
+                : action.direction === 'forward' ? 'forwardSwipe' : 'backwardSwipe',
+            },
+          }),
+        );
+        return;
     }
   }
 
@@ -775,30 +759,19 @@ export class BridgeServer {
   }
 
   #handleSimMode(res: ServerResponse): void {
-    if (!this.#opts.simulate) {
-      sendJson(res, 403, { error: 'simulation endpoints disabled in production' });
-      return;
-    }
+    if (!this.#requireSimulation(res)) return;
     sendJson(res, 200, { mode: this.#cycleMode() });
   }
 
   async #handleSimEmotion(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!this.#opts.simulate) {
-      sendJson(res, 403, { error: 'simulation endpoints disabled in production' });
-      return;
-    }
+    if (!this.#requireSimulation(res)) return;
     const body = await readBody(req, MAX_BODY_BYTES);
     if (!body.ok) {
       sendJson(res, 413, { error: 'payload too large' });
       return;
     }
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(body.data);
-    } catch {
-      sendJson(res, 400, { error: 'invalid JSON' });
-      return;
-    }
+    const parsed = this.#parseJsonBody(body, res) as Record<string, unknown> | null;
+    if (parsed === null) return;
     const emotion = parsed.emotion;
     if (typeof emotion !== 'string' || !EMOTIONS.includes(emotion as never)) {
       sendJson(res, 400, { error: `emotion must be one of: ${EMOTIONS.join(', ')}` });
@@ -816,22 +789,14 @@ export class BridgeServer {
   }
 
   async #handleSimButton(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!this.#opts.simulate) {
-      sendJson(res, 403, { error: 'simulation endpoints disabled in production' });
-      return;
-    }
+    if (!this.#requireSimulation(res)) return;
     const body = await readBody(req, MAX_BODY_BYTES);
     if (!body.ok) {
       sendJson(res, 413, { error: 'payload too large' });
       return;
     }
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(body.data);
-    } catch {
-      sendJson(res, 400, { error: 'invalid JSON' });
-      return;
-    }
+    const parsed = this.#parseJsonBody(body, res) as Record<string, unknown> | null;
+    if (parsed === null) return;
     const button = parsed.button;
     if (button !== 'A' && button !== 'B' && button !== 'C') {
       sendJson(res, 400, { error: 'button must be A, B, or C' });
@@ -854,22 +819,14 @@ export class BridgeServer {
   }
 
   async #handleSimTouch(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!this.#opts.simulate) {
-      sendJson(res, 403, { error: 'simulation endpoints disabled in production' });
-      return;
-    }
+    if (!this.#requireSimulation(res)) return;
     const body = await readBody(req, MAX_BODY_BYTES);
     if (!body.ok) {
       sendJson(res, 413, { error: 'payload too large' });
       return;
     }
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(body.data);
-    } catch {
-      sendJson(res, 400, { error: 'invalid JSON' });
-      return;
-    }
+    const parsed = this.#parseJsonBody(body, res) as Record<string, unknown> | null;
+    if (parsed === null) return;
     const gesture = parsed.gesture;
     const valid = ['press', 'release', 'forwardSwipe', 'backwardSwipe', 'pet'];
     if (typeof gesture !== 'string' || !valid.includes(gesture)) {
@@ -879,7 +836,7 @@ export class BridgeServer {
 
     if (gesture === 'press' || gesture === 'release') {
       this.handleDeviceInput('touch', { gesture });
-      sendJson(res, 202, { gesture, state: this.#headTouchState });
+      sendJson(res, 202, { gesture, state: this.#gesture.touchState });
       return;
     }
 
@@ -929,8 +886,13 @@ export class BridgeServer {
       if (!pending) continue;
       if (pending.isCritical) {
         const now = Date.now();
-        if (this.#lastHeadTapAt && now - this.#lastHeadTapAt <= this.#DOUBLE_TAP_WINDOW_MS) {
+        if (
+          this.#lastHeadTapAt &&
+          this.#lastHeadTapSessionId === sessionId &&
+          now - this.#lastHeadTapAt <= this.#DOUBLE_TAP_WINDOW_MS
+        ) {
           this.#lastHeadTapAt = 0;
+          this.#lastHeadTapSessionId = null;
           const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, 'approved');
           if (eventId) {
             this.#opts.attentionManager.resolve(eventId, 'approved', 'head');
@@ -940,10 +902,12 @@ export class BridgeServer {
           }
         }
         this.#lastHeadTapAt = now;
+        this.#lastHeadTapSessionId = sessionId;
         return { approved: false, consumed: true };
       }
       // Non-critical: single tap approves, just like before.
       this.#lastHeadTapAt = 0;
+      this.#lastHeadTapSessionId = null;
       const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, 'approved');
       if (eventId) {
         this.#opts.attentionManager.resolve(eventId, 'approved', 'head');
@@ -972,14 +936,9 @@ export class BridgeServer {
   }
 
   async #handleSimPermission(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!this.#opts.simulate) {
-      sendJson(res, 403, { error: 'simulation endpoints disabled in production' });
-      return;
-    }
-    if (!this.#opts.claudeAdapter) {
-      sendJson(res, 404, { error: 'claude adapter not configured' });
-      return;
-    }
+    if (!this.#requireSimulation(res)) return;
+    const claude = this.#requireClaudeAdapter(res);
+    if (!claude) return;
     const body = await readBody(req, MAX_BODY_BYTES);
     if (!body.ok) {
       sendJson(res, 413, { error: 'payload too large' });
@@ -987,29 +946,24 @@ export class BridgeServer {
     }
     let parsed: Record<string, unknown> = {};
     if (body.data.length > 0) {
-      try {
-        parsed = JSON.parse(body.data);
-      } catch {
-        sendJson(res, 400, { error: 'invalid JSON' });
-        return;
-      }
+      const result = this.#parseJsonBody(body, res);
+      if (result === null) return;
+      parsed = result as Record<string, unknown>;
     }
     const requestedSessionId = typeof parsed.sessionId === 'string' ? parsed.sessionId : null;
-    const existing = requestedSessionId
-      ? this.#opts.claudeAdapter.sessions().get(requestedSessionId)
-      : undefined;
+    const existing = requestedSessionId ? claude.sessions().get(requestedSessionId) : undefined;
     const sessionId = requestedSessionId ?? `sim-${Date.now().toString(36)}`;
     const cwd = typeof parsed.cwd === 'string' ? parsed.cwd : (existing?.cwd ?? '/sim/cwd');
     const command = typeof parsed.command === 'string' ? parsed.command : 'rm -rf /tmp/example';
     if (!existing) {
-      this.#opts.claudeAdapter.handleHookEvent({
+      claude.handleHookEvent({
         hook_event_name: 'UserPromptSubmit',
         session_id: sessionId,
         cwd,
         prompt: command,
       });
     }
-    this.#opts.claudeAdapter.handleHookEvent({
+    claude.handleHookEvent({
       hook_event_name: 'Notification',
       session_id: sessionId,
       cwd,
