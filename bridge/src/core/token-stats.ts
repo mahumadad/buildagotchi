@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs';
 import pino from 'pino';
+import { loadJsonFile, saveJsonFile } from './json-file.js';
 import { localDateString } from '../recorder/recorder.js';
 
 const logger = pino({ name: 'token-stats' });
@@ -84,29 +84,14 @@ export class TokenStats {
   }
 
   #load(): void {
-    let raw: string;
-    try {
-      raw = readFileSync(this.#path, 'utf8');
-    } catch {
-      return; // first run
-    }
-    try {
-      const parsed = JSON.parse(raw) as PersistedShape;
-      // Only revive `today` if it IS today. A stale counter reads as real usage.
-      if (parsed.day === this.#day && typeof parsed.today === 'number') {
-        this.#today = parsed.today;
-      }
-    } catch (err) {
-      logger.warn({ err, path: this.#path }, 'corrupt token stats; starting from zero');
+    const parsed = loadJsonFile<PersistedShape>(this.#path, logger);
+    if (!parsed) return;
+    if (parsed.day === this.#day && typeof parsed.today === 'number') {
+      this.#today = parsed.today;
     }
   }
 
   #save(): void {
-    const data: PersistedShape = { day: this.#day, today: this.#today };
-    try {
-      writeFileSync(this.#path, JSON.stringify(data));
-    } catch (err) {
-      logger.warn({ err, path: this.#path }, 'could not persist token stats');
-    }
+    saveJsonFile(this.#path, { day: this.#day, today: this.#today } satisfies PersistedShape, logger);
   }
 }

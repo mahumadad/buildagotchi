@@ -1,6 +1,6 @@
-import { readFileSync, writeFileSync } from 'node:fs';
 import pino from 'pino';
 import type { ResolveSource } from './attention.js';
+import { loadJsonFile, saveJsonFile } from './json-file.js';
 import { isWorkday, workdayGap } from './workday.js';
 import { localDateString } from '../recorder/recorder.js';
 
@@ -122,38 +122,24 @@ export class LifeStats {
   }
 
   #load(): void {
-    let raw: string;
-    try {
-      raw = readFileSync(this.#path, 'utf8');
-    } catch {
-      return;
-    }
-    try {
-      const p = JSON.parse(raw) as PersistedShape;
-      if (typeof p.approvals === 'number') this.#approvals = p.approvals;
-      if (typeof p.denials === 'number') this.#denials = p.denials;
-      if (typeof p.fromHead === 'number') this.#fromHead = p.fromHead;
-      if (typeof p.streak === 'number') this.#streak = p.streak;
-      if (typeof p.lastActiveDate === 'string') this.#lastActiveDate = p.lastActiveDate;
-      if (typeof p.milestoneFired === 'boolean') this.#milestoneFired = p.milestoneFired;
-    } catch (err) {
-      logger.warn({ err, path: this.#path }, 'corrupt life stats; starting from zero');
-    }
+    const p = loadJsonFile<PersistedShape>(this.#path, logger);
+    if (!p) return;
+    if (typeof p.approvals === 'number') this.#approvals = p.approvals;
+    if (typeof p.denials === 'number') this.#denials = p.denials;
+    if (typeof p.fromHead === 'number') this.#fromHead = p.fromHead;
+    if (typeof p.streak === 'number') this.#streak = p.streak;
+    if (typeof p.lastActiveDate === 'string') this.#lastActiveDate = p.lastActiveDate;
+    if (typeof p.milestoneFired === 'boolean') this.#milestoneFired = p.milestoneFired;
   }
 
   #save(): void {
-    const data: PersistedShape = {
+    saveJsonFile(this.#path, {
       approvals: this.#approvals,
       denials: this.#denials,
       fromHead: this.#fromHead,
       streak: this.#streak,
       lastActiveDate: this.#lastActiveDate,
       milestoneFired: this.#milestoneFired,
-    };
-    try {
-      writeFileSync(this.#path, JSON.stringify(data));
-    } catch (err) {
-      logger.warn({ err, path: this.#path }, 'could not persist life stats');
-    }
+    } satisfies PersistedShape, logger);
   }
 }
