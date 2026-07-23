@@ -229,6 +229,27 @@ describe('ProtocolSession', () => {
     expect(counters.ble_reconnects_total).toBe(1);
   });
 
+  it('a failed initial connect keeps the bridge up and retries instead of aborting startup', async () => {
+    // The device isn't advertising at startup (e.g. still booting after a flash).
+    // start() must resolve — not throw and take the whole process down — and the
+    // reconnect loop attaches the link once the device appears.
+    const transport = new LoopbackTransport();
+    transport.failNextConnects(1);
+    const { metrics, counters } = makeMetrics();
+    const session = new ProtocolSession(transport, baseCfg(), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics,
+      logger: makeLogger(),
+    });
+
+    await expect(session.start()).resolves.toBeUndefined(); // no throw
+    expect(counters.ble_reconnects_total ?? 0).toBe(0); // not linked yet
+
+    await vi.advanceTimersByTimeAsync(1_000); // backoff -> connect succeeds -> linked
+    expect(counters.ble_reconnects_total).toBe(1);
+  });
+
   it('die() -> 3 hb windows -> reconnection with growing backoff -> revive() -> hello -> state_sync', async () => {
     const transport = new LoopbackTransport();
     const { metrics, counters } = makeMetrics();

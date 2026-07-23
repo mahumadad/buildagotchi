@@ -132,7 +132,17 @@ export class ProtocolSession {
 
   async start(): Promise<void> {
     this.#transport.onLine((line) => this.#handleLine(line));
-    await this.#transport.connect();
+    try {
+      await this.#transport.connect();
+    } catch (err) {
+      // The device may not be advertising yet — e.g. still booting after a flash
+      // or reset. A failed initial connect must not abort startup (that took the
+      // whole bridge, HTTP and all, down with it). Bring the bridge up and let
+      // the reconnect loop attach the link when the device appears.
+      this.#deps.logger.warn({ err }, 'initial ble connect failed; retrying in background');
+      this.#onLinkDead();
+      return;
+    }
 
     const ok = await this.#sendHelloAndAwait();
     if (ok) {
