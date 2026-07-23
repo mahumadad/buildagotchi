@@ -90,8 +90,9 @@ ble:
 
 # Event → ResolvedState mapping (D3 — no hard-wiring adapters to emotions here).
 # First rule that matches wins. Severity-only rules at the end are the safety net.
-# S2.5.16: `pattern` must be one of {solid, blink, rainbow, off} — the firmware's
-# real capabilities. The zod enum enforces this at load time.
+# `pattern` must be one of {solid, blink, rainbow, off, pulse} — the firmware's
+# real capabilities (pulse/breathing verified on the CoreS3 head LED, D-03,
+# 2026-07-23). The zod enum enforces this at load time.
 stateRules:
   # ── Permisos ─────────────────────────────────────────────────────────────
   # Destructive command → red-blink LED, angry_mark decorator. balloonPolicy is
@@ -202,7 +203,8 @@ stateRules:
       emotion: NEUTRAL
       decorators: [thinking]   # indica que Claude está trabajando en esta sesión
       gaze: center
-      leds: [{ row: right, color: blue, pattern: blink }]
+      # D-03: breathing azul mientras Claude piensa — más Calm Tech que el blink.
+      leds: [{ row: right, color: blue, pattern: pulse }]
 
   # Silent by design: a subagent starting shouldn't interrupt (Calm Tech).
   - match: { source: claude, category: subagent }

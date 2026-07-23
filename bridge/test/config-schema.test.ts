@@ -69,10 +69,10 @@ describe('ConfigSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  // M13 test 9: only the firmware's real patterns are accepted (S2.5.16).
-  // `pulse` was in the emulator; declaring it in a rule would produce a config
-  // that only works in the browser.
-  it('M13-9: rejects LED pattern outside {solid, blink, rainbow, off}', () => {
+  // M13 test 9: only the firmware's real patterns are accepted. `pulse` joined
+  // the set once D-03 verified breathing on the CoreS3 head LED (2026-07-23); an
+  // unknown pattern still fails loudly at load rather than reaching the robot.
+  it('M13-9: rejects an LED pattern outside {solid, blink, rainbow, off, pulse}', () => {
     const result = ConfigSchema.safeParse({
       schemaVersion: 1,
       stateRules: [
@@ -80,7 +80,7 @@ describe('ConfigSchema', () => {
           match: { severity: 'critical' },
           state: {
             emotion: 'ANGRY',
-            leds: [{ row: 'right', color: 'red', pattern: 'pulse' }],
+            leds: [{ row: 'right', color: 'red', pattern: 'strobe' }],
           },
         },
       ],
@@ -88,8 +88,8 @@ describe('ConfigSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('M13-9: accepts the four firmware-real patterns', () => {
-    for (const pattern of ['solid', 'blink', 'rainbow', 'off']) {
+  it('M13-9: accepts the five firmware-real patterns', () => {
+    for (const pattern of ['solid', 'blink', 'rainbow', 'off', 'pulse']) {
       const result = ConfigSchema.safeParse({
         schemaVersion: 1,
         stateRules: [

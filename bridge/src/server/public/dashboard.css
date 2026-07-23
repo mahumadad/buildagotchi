@@ -158,9 +158,12 @@ body {
   animation: led-rainbow 2.5s linear infinite;
 }
 
-/* `pulse` was removed from the schema (S2.5.16): the firmware only exposes
-   on/off/blink/rainbow. Its CSS went with it, so nobody writes a rule against
-   a pattern that cannot reach the robot. */
+/* D-03: `pulse` (breathing) is back in the schema — verified on the CoreS3 head
+   LED (PY32Led) on 2026-07-23. The firmware breathes with a raised cosine over
+   2000ms; ease-in-out opacity is the browser's closest match to that curve. */
+.led.pulse {
+  animation: led-pulse 2s ease-in-out infinite;
+}
 
 @keyframes led-blink {
   50% {
@@ -174,6 +177,16 @@ body {
   }
   to {
     filter: hue-rotate(360deg);
+  }
+}
+
+@keyframes led-pulse {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 1;
   }
 }
 

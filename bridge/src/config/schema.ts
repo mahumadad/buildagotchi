@@ -35,16 +35,16 @@ const ModeSchema = z.enum(['NORMAL', 'FOCUS', 'SLEEP']);
 
 /**
  * LED patterns supported by the `stack-chan` firmware
- * (firmware/stackchan/led/led.ts:60-140). `pulse` was in the emulator but not
- * in the firmware; declaring it as a rule would produce a config that only
- * works on the browser (S2.5.16). Restricting the enum makes typos fail loudly
- * at load time.
+ * (firmware/stackchan/led/led.ts:60-140, plus `pulse` in the buildagotchi_ble
+ * mod). `pulse` (breathing) was long emulator-only; D-03 closed it — verified on
+ * the CoreS3 head LED (PY32Led) on 2026-07-23, so it's a real firmware pattern
+ * now. Restricting the enum makes typos fail loudly at load time.
  */
 const LedCommandSchema = z.object({
   row: z.enum(['left', 'right']),
   index: z.number().optional(),
   color: z.string(),
-  pattern: z.enum(['solid', 'blink', 'rainbow', 'off']),
+  pattern: z.enum(['solid', 'blink', 'rainbow', 'off', 'pulse']),
 });
 
 const ResolvedStatePartialSchema = z.object({
