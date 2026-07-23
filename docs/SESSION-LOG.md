@@ -48,3 +48,34 @@ Touch cabeza → eventos al bridge (Gate 1).
 ### Siguiente
 - Commit touch MOD; probar con bridge real (tap aprueba permiso).
 - Gate 1 uso diario.
+
+## 2026-07-22 (noche) — balloon abajo
+
+### Hechos
+- Balloon estaba arriba por `top: 6` en el MOD.
+- Alineado a defaults upstream SpeechBalloon: `{ left:16, right:16, bottom:12 }` (sin `top`/`width`).
+- Reflash + demo: hola / permiso pendiente / wrap largo.
+
+### Feedback
+- Usuario: letra muy pequeña, muy cuadrado — no parece original.
+
+## 2026-07-22 (noche) — balloon trial factory
+
+### Hechos
+- Trial estilo factory M5Stack (`speech_bubble.cpp`): H=52, W 90–300, OpenSans-24.
+- Posición bajada a `top:164` (debajo de la boca ≈148).
+- Flecha factory tip-up; luego ×1.5; luego restaurada 28×32 exacta del asset factory.
+- Quitada cola del `SpeechBalloon`/`bubble.png` → píldora propia `bubble-pill.png`.
+- Fuente: `OpenSans-Regular-16` (mismo tamaño que `lv_font_montserrat_16`; forma ≠ Montserrat).
+
+### Siguiente
+- Confirmación visual; si hace falta Montserrat real → empaquetar TTF; commit si OK.
+
+## 2026-07-22 (noche) — presets balloon
+
+### Hechos
+- Factory set guardado como `FACTORY_BALLOON` en MOD (`BALLOON_STYLE = 'factory'`).
+- Emulator Feature A como `'emulator'`.
+- Activo: `'hybrid'` — burbuja r=14 + flecha factory (colita de pez, offset +40) + OpenSans-16 + marquee circular en textos largos.
+- Switch: `BALLOON_STYLE = 'factory' | 'emulator' | 'hybrid'`.
+- Usuario OK con hybrid (2026-07-22 noche). Nota menor: pixels negros en bordes del 9-slice (aceptable). Marquee 1 línea OK.

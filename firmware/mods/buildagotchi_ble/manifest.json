@@ -1,5 +1,11 @@
 {
   "include": ["$(MODDABLE)/examples/manifest_mod.json"],
+  "resources": {
+    "*": "./assets/*",
+    "*-mask": [
+      "$(MODDABLE)/examples/assets/fonts/OpenSans-Regular-16"
+    ]
+  },
   "modules": {
     "*": ["./mod"]
   }
