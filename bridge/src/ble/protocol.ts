@@ -7,6 +7,8 @@ const HELLO_TIMEOUT_MS = 2_000;
 const HELLO_RETRY_MS = 30_000;
 const HELLO_REFRESH_MS = 10 * 60 * 1_000;
 const ACK_TIMEOUT_MS = 500;
+/** D-10: how many in-flight `seq → eventId` entries to keep before evicting oldest. */
+const SEQ_EVENT_ID_MAX = 32;
 
 export interface BleConfig {
   heartbeatSeconds: number;
@@ -40,6 +42,13 @@ export interface ProtocolSessionDeps {
   metrics: MetricsLike;
   logger: Logger;
   now?: () => number;
+  /**
+   * D-10: the firmware half of D23's latency budget. `state_latency_ms` lives in
+   * a histogram that dies on restart; Gate 1 needs a p95 over three weeks, so the
+   * sample is also persisted here, tagged with the `eventId` that drove the state
+   * so it can be joined offline with the bridge-leg `state_change` line.
+   */
+  recordStateApplied?: (data: { eventId?: string; latencyMs: number; seq: number }) => void;
 }
 
 interface Envelope {
@@ -62,6 +71,7 @@ interface PendingState {
   seq: number;
   retried: boolean;
   timer: NodeJS.Timeout;
+  eventId?: string;
 }
 
 function isEnvelope(value: unknown): value is Envelope {
@@ -94,6 +104,12 @@ export class ProtocolSession {
   #lastState: ResolvedState | null = null;
 
   #pending: PendingState | null = null;
+  /**
+   * D-10: `seq → eventId` for states in flight, so a `state_applied` (which
+   * echoes only `ack_seq`) can be attributed to the event that drove it. Bounded
+   * to the last few seqs — a firmware that never answers evicts by age, not leak.
+   */
+  #seqToEventId = new Map<number, string>();
   #awaitingHello: AwaitingHello | null = null;
   #helloRefreshTimer: NodeJS.Timeout | null = null;
 
@@ -156,13 +172,13 @@ export class ProtocolSession {
     return this.#linkHealthy;
   }
 
-  sendState(state: ResolvedState): void {
+  sendState(state: ResolvedState, eventId?: string): void {
     this.#lastState = state;
     // Always remember the latest face; only put it on the wire when the link
     // can carry it. Callers may seed before connect() (composition root) so
     // start()/reconnect can state_sync immediately after hello.
     if (!this.#linkHealthy) return;
-    this.#sendStatePayload('state', state);
+    this.#sendStatePayload('state', state, eventId);
   }
 
   // --- hello / clock offset -------------------------------------------
@@ -317,15 +333,33 @@ export class ProtocolSession {
     if (this.#lastState) this.#sendStatePayload('state_sync', this.#lastState);
   }
 
-  #sendStatePayload(type: 'state' | 'state_sync', state: ResolvedState): void {
+  #sendStatePayload(type: 'state' | 'state_sync', state: ResolvedState, eventId?: string): void {
     if (this.#pending) clearTimeout(this.#pending.timer);
     const seq = this.#nextSeq();
     // Register the pending state BEFORE transmitting. A transport that answers
     // synchronously delivers the ack from inside `send()`, and `#handleAck`
     // would find nothing pending to clear — two "missed" acks later, a healthy
     // link gets declared dead. `#sendHelloAndAwait` already had this ordering.
-    this.#pending = { type, state, seq, retried: false, timer: this.#scheduleAckTimeout(seq) };
+    this.#pending = {
+      type,
+      state,
+      seq,
+      retried: false,
+      timer: this.#scheduleAckTimeout(seq),
+      ...(eventId === undefined ? {} : { eventId }),
+    };
+    if (eventId !== undefined) this.#rememberSeqEventId(seq, eventId);
     this.#transmitState(type, state, seq);
+  }
+
+  #rememberSeqEventId(seq: number, eventId: string): void {
+    this.#seqToEventId.set(seq, eventId);
+    // Bound the map: a firmware that stops answering must not grow it forever.
+    while (this.#seqToEventId.size > SEQ_EVENT_ID_MAX) {
+      const oldest = this.#seqToEventId.keys().next().value;
+      if (oldest === undefined) break;
+      this.#seqToEventId.delete(oldest);
+    }
   }
 
   #transmitState(type: 'state' | 'state_sync', state: ResolvedState, seq: number): void {
@@ -342,7 +376,7 @@ export class ProtocolSession {
 
     if (!this.#pending.retried) {
       const newSeq = this.#nextSeq();
-      const { type, state } = this.#pending;
+      const { type, state, eventId } = this.#pending;
       // Same ordering as above: the retry can be acked before `send()` returns.
       this.#pending = {
         ...this.#pending,
@@ -350,6 +384,10 @@ export class ProtocolSession {
         retried: true,
         timer: this.#scheduleAckTimeout(newSeq),
       };
+      // The retry rides a new seq; the firmware will echo that one, so the
+      // eventId has to follow it (the original seq is dead now).
+      this.#seqToEventId.delete(seq);
+      if (eventId !== undefined) this.#rememberSeqEventId(newSeq, eventId);
       this.#transmitState(type, state, newSeq);
       return;
     }
@@ -371,6 +409,15 @@ export class ProtocolSession {
     const p = envelope.p as { ack_seq: number; bridge_ts: number; fw_applied_ts: number };
     const latency = p.fw_applied_ts - this.#clockOffset - p.bridge_ts;
     this.#deps.metrics.histogram('state_latency_ms').observe(latency);
+    // D-10: persist the sample alongside the eventId so it survives a restart and
+    // can be joined offline with the bridge-leg `state_change` line.
+    const eventId = this.#seqToEventId.get(p.ack_seq);
+    this.#seqToEventId.delete(p.ack_seq);
+    this.#deps.recordStateApplied?.({
+      ...(eventId === undefined ? {} : { eventId }),
+      latencyMs: latency,
+      seq: p.ack_seq,
+    });
   }
 
   #handleEvent(envelope: Envelope): void {

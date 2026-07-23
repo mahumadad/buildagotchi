@@ -92,6 +92,69 @@ describe('ProtocolSession', () => {
     expect(histograms.state_latency_ms).toEqual([25]);
   });
 
+  it('D-10: records the firmware-leg sample tagged with the driving eventId', async () => {
+    const transport = new LoopbackTransport({ ackDelayMs: 25, fwClockSkewMs: 4_000 });
+    const recordStateApplied = vi.fn();
+    const session = new ProtocolSession(transport, baseCfg(), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics: makeMetrics().metrics,
+      logger: makeLogger(),
+      recordStateApplied,
+    });
+
+    await session.start();
+    session.sendState(STATE_A, 'evt-42');
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(recordStateApplied).toHaveBeenCalledTimes(1);
+    expect(recordStateApplied).toHaveBeenCalledWith(
+      expect.objectContaining({ eventId: 'evt-42', latencyMs: 25 }),
+    );
+  });
+
+  it('D-10: a state with no eventId records the sample without one', async () => {
+    const transport = new LoopbackTransport({ ackDelayMs: 10 });
+    const recordStateApplied = vi.fn();
+    const session = new ProtocolSession(transport, baseCfg(), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics: makeMetrics().metrics,
+      logger: makeLogger(),
+      recordStateApplied,
+    });
+
+    await session.start();
+    session.sendState(STATE_A); // no eventId (e.g. reconnect state_sync)
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(recordStateApplied).toHaveBeenCalledTimes(1);
+    expect(recordStateApplied.mock.calls[0]?.[0]).not.toHaveProperty('eventId');
+  });
+
+  it('D-10: the eventId follows the retry onto its new seq', async () => {
+    const transport = new LoopbackTransport({ dropSeqs: new Set([2]) });
+    const recordStateApplied = vi.fn();
+    const session = new ProtocolSession(transport, baseCfg(), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics: makeMetrics().metrics,
+      logger: makeLogger(),
+      recordStateApplied,
+    });
+
+    await session.start(); // hello uses seq 1
+    session.sendState(STATE_A, 'evt-7'); // seq 2, dropped
+    await vi.advanceTimersByTimeAsync(500); // ack timeout -> retry as seq 3
+    await vi.advanceTimersByTimeAsync(10); // default loopback ack delay
+
+    // Only the retry (seq 3) is applied, and it still carries the eventId.
+    expect(recordStateApplied).toHaveBeenCalledTimes(1);
+    expect(recordStateApplied).toHaveBeenCalledWith(
+      expect.objectContaining({ eventId: 'evt-7', seq: 3 }),
+    );
+  });
+
   it('drops the first send, retries at 500ms, gets acked -> no reconnection', async () => {
     const transport = new LoopbackTransport({ dropSeqs: new Set([2]) });
     const { metrics, counters } = makeMetrics();

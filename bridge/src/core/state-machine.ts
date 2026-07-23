@@ -45,7 +45,7 @@ export interface MetricsLike {
 }
 
 export interface StateMachineDeps {
-  emit: (state: ResolvedState) => void;
+  emit: (state: ResolvedState, eventId?: string) => void;
   record: (type: 'state_change', data: Record<string, unknown>) => void;
   metrics: MetricsLike;
   now?: () => number;
@@ -361,7 +361,7 @@ export class StateMachine {
         ...(eventId !== undefined ? { eventId } : {}),
       });
     }
-    this.#deps.emit(next);
+    this.#deps.emit(next, eventId);
   }
 
   /**

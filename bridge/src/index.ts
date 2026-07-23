@@ -210,11 +210,11 @@ async function main(): Promise<void> {
   const stateMachine = new StateMachine(
     config.stateRules,
     {
-      emit: (state) => {
+      emit: (state, eventId) => {
         // The wire (S2.5.15). `session` is null when there is no transport at
         // all — no hardware and no `--simulate` — and the dashboard is then the
         // only display. The server reads its own copy from the state machine.
-        session?.sendState(state);
+        session?.sendState(state, eventId);
         server.notifyState();
       },
       record: (type, data) => {
@@ -317,6 +317,15 @@ async function main(): Promise<void> {
       },
       metrics,
       logger,
+      // D-10: firmware-leg latency + eventId, persisted as its own state_change
+      // line so it survives restart and joins the bridge-leg line offline.
+      recordStateApplied: (data) =>
+        recorder.record({
+          line_type: 'state_change',
+          ts: Date.now(),
+          context: recorderContext(),
+          data: { leg: 'firmware', ...data },
+        }),
     });
   }
 
