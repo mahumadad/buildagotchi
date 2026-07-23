@@ -199,6 +199,36 @@ describe('ProtocolSession', () => {
     expect(counters.ble_reconnects_total).toBe(1);
   });
 
+  it('a connect() failure during reconnect retries with backoff instead of crashing', async () => {
+    // The CoreS3 stops advertising while it reboots (e.g. after a flash), so the
+    // reconnect scan rejects. That rejection used to escape `void
+    // #attemptReconnect()` and crash the whole bridge; it must now just schedule
+    // another attempt. `failConnectTimes: 1` reproduces the first scan timing out.
+    const transport = new LoopbackTransport({ dropSeqs: new Set([2, 3]) });
+    const { metrics, counters } = makeMetrics();
+    const session = new ProtocolSession(transport, baseCfg(), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics,
+      logger: makeLogger(),
+    });
+
+    await session.start(); // initial connect succeeds
+    transport.failNextConnects(1); // ...but the first RECONNECT scan will time out
+    session.sendState(STATE_A); // seq 2, dropped
+    await vi.advanceTimersByTimeAsync(500); // retry, seq 3, also dropped
+    await vi.advanceTimersByTimeAsync(500); // ack miss -> reconnection scheduled
+
+    // Attempt 0 (backoff 1s): connect() REJECTS. The session must survive and
+    // reschedule — not reconnect yet, not throw.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(counters.ble_reconnects_total ?? 0).toBe(0);
+
+    // Attempt 1 (backoff grows to 2s): connect() succeeds -> reconnected.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(counters.ble_reconnects_total).toBe(1);
+  });
+
   it('die() -> 3 hb windows -> reconnection with growing backoff -> revive() -> hello -> state_sync', async () => {
     const transport = new LoopbackTransport();
     const { metrics, counters } = makeMetrics();

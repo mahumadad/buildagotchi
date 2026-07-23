@@ -20,6 +20,8 @@ export interface LoopbackTransportOptions {
   respondHello?: boolean;
   /** Fake clock skew of the simulated firmware relative to the bridge's clock. */
   fwClockSkewMs?: number;
+  /** Reject the next N `connect()` calls, as a device that isn't advertising yet. */
+  failConnectTimes?: number;
 }
 
 /**
@@ -33,6 +35,7 @@ export class LoopbackTransport implements Transport {
   #dropSeqs: Set<number>;
   #respondHello: boolean;
   #fwClockSkewMs: number;
+  #failConnectRemaining: number;
   #state: TransportState = 'disconnected';
   #dead = false;
   #sentLines: string[] = [];
@@ -44,9 +47,14 @@ export class LoopbackTransport implements Transport {
     this.#dropSeqs = opts.dropSeqs ?? new Set();
     this.#respondHello = opts.respondHello ?? true;
     this.#fwClockSkewMs = opts.fwClockSkewMs ?? 0;
+    this.#failConnectRemaining = opts.failConnectTimes ?? 0;
   }
 
   connect(): Promise<void> {
+    if (this.#failConnectRemaining > 0) {
+      this.#failConnectRemaining -= 1;
+      return Promise.reject(new Error('loopback: no device advertising'));
+    }
     this.#setState('connected');
     return Promise.resolve();
   }
@@ -95,6 +103,11 @@ export class LoopbackTransport implements Transport {
 
   inject(line: string): void {
     this.#lineCb?.(line);
+  }
+
+  /** Make the next N `connect()` calls reject (e.g. reconnect while rebooting). */
+  failNextConnects(n: number): void {
+    this.#failConnectRemaining = n;
   }
 
   sentLines(): string[] {

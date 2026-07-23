@@ -304,27 +304,36 @@ export class ProtocolSession {
   }
 
   async #attemptReconnect(): Promise<void> {
-    await this.#transport.disconnect();
-    await this.#transport.connect();
+    try {
+      await this.#transport.disconnect();
+      await this.#transport.connect();
 
-    const ok = await this.#sendHelloAndAwait();
-    if (!ok) {
-      this.#reconnectAttempt += 1;
-      this.#scheduleReconnectAttempt();
-      return;
+      const ok = await this.#sendHelloAndAwait();
+      if (ok) {
+        this.#reconnecting = false;
+        this.#reconnectAttempt = 0;
+        this.#setLinkHealthy(true);
+        this.#deps.metrics.counter('ble_reconnects_total').inc();
+        this.#deps.metrics
+          .histogram('reconnect_duration_ms')
+          .observe(this.#now() - this.#reconnectStartedAt);
+
+        this.#scheduleHelloRefresh(HELLO_REFRESH_MS);
+        this.#startHeartbeat();
+        this.#sendStateSync();
+        return;
+      }
+    } catch (err) {
+      // `connect()` rejects when no device is advertising yet — e.g. the CoreS3
+      // is still booting after a flash/reset and hasn't started advertising
+      // within the scan window. That is a normal, recoverable reconnect state,
+      // not a fatal error. Scheduled via `void #attemptReconnect()`, so an
+      // escaping rejection here would crash the whole bridge; swallow it and
+      // fall through to another backoff attempt.
+      this.#deps.logger.warn({ err }, 'ble reconnect attempt failed; retrying');
     }
-
-    this.#reconnecting = false;
-    this.#reconnectAttempt = 0;
-    this.#setLinkHealthy(true);
-    this.#deps.metrics.counter('ble_reconnects_total').inc();
-    this.#deps.metrics
-      .histogram('reconnect_duration_ms')
-      .observe(this.#now() - this.#reconnectStartedAt);
-
-    this.#scheduleHelloRefresh(HELLO_REFRESH_MS);
-    this.#startHeartbeat();
-    this.#sendStateSync();
+    this.#reconnectAttempt += 1;
+    this.#scheduleReconnectAttempt();
   }
 
   // --- state / ack -------------------------------------------------------
