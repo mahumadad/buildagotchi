@@ -28,3 +28,23 @@ ojo a medias por Contour stale; puerto LG vs CoreS3.
 
 ### Siguiente
 Touch cabeza → eventos al bridge (Gate 1).
+
+## 2026-07-22 (noche) — touch BLE
+
+### Hechos
+- MOD emite `event` touch/button + TX chunking.
+- `touchPanel hooked`; botones A/B/C ausentes en CoreS3.
+- Código listo en bridge (`handleDeviceInput` press/release → tap).
+
+### Problema → fix
+- Si12T default → siempre `[0,0,0]`. Fix: `sensitivityType:1, sensitivityLevel:0`.
+- Gestos antes de CCCD notify se perdían. Fix: cola `pendingOut` + flush al enable.
+- Botones A/B/C ausentes en CoreS3 (esperado).
+
+### Evidencia E2E
+- Serial: `gesture press` / `release` + FIRST non-zero `[3,3,0]`.
+- BLE: `event` `{kind:touch, detail:{gesture:press|release}}` (flush de cola).
+
+### Siguiente
+- Commit touch MOD; probar con bridge real (tap aprueba permiso).
+- Gate 1 uso diario.

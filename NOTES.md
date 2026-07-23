@@ -150,7 +150,7 @@ Observado (~90 s instrumentado + smoke previo + **5 min** serial sin panic):
   confirmado visual por usuario 2026-07-22
 - [x] Cara sigue renderizando fluido — cara visible con WiFi+BLE+servos+LEDs;
   cabeza en movimiento confirmada visual por usuario 2026-07-22
-- [ ] Touch cabeza responde — *no verificado*
+- [x] Touch cabeza responde — press/release por BLE (Si12T high/0 + event queue, 2026-07-22)
 - [x] Sin reinicios / panics / brownouts (ventana instrumentada)
 - [ ] `robot.button.a` — **ausente** en runtime (`no button.a`); botones físicos
   del CoreS3 no mapean al API `robot.button` con esta config
@@ -451,4 +451,5 @@ El relato de sesión va también a [DEVLOG.md](DEVLOG.md).
 | 2026-07-22 | “Sin balloon” = sleepy | Disconnect → D16 | Esperado; clear≠disconnect |
 | 2026-07-22 | Un ojo a medias | Eyelid Contour stale + servo timeouts | Remount `SimpleFace` on connect |
 | 2026-07-22 | Serial USB mudo | JTAG tras xsbug | Reset físico / replug |
+| 2026-07-22 | Touch cabeza siempre `[0,0,0]` | Si12T sensibilidad default baja | `configure({sensitivityType:1,sensitivityLevel:0})` — FIRST non-zero + press |
 | *(abierto)* | Rain `timeout.` scservo | Bus/IDs/power | Investigar; remount mitiga cara |

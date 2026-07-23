@@ -9,6 +9,10 @@ import Timer from 'timer'
 
 const SAFE_MODE_MS = 15_000
 const DEVICE_NAME = 'buildagotchi'
+/** Host uart TX/RX characteristic maxBytes (uart.json). */
+const NUS_CHUNK = 64
+/** Same window as default-mods petting (fwd+bwd swipe ⇒ pet). */
+const PET_WINDOW_MS = 800
 
 const EMOTIONS = {
   NEUTRAL: 'NEUTRAL',
@@ -50,6 +54,8 @@ class BuildagotchiServer extends BLEServer {
     this.safeTimer = null
     this.lastBalloon = null
     this.faceDirty = true
+    /** Outbound event lines queued until CCCD notify is enabled. */
+    this.pendingOut = []
   }
 
   onReady() {
@@ -89,11 +95,24 @@ class BuildagotchiServer extends BLEServer {
   }
 
   onCharacteristicNotifyEnabled(characteristic) {
-    if (characteristic.name === 'tx') this.tx = characteristic
+    if (characteristic.name === 'tx') {
+      this.tx = characteristic
+      this.flushPendingOut()
+    }
   }
 
   onCharacteristicNotifyDisabled(characteristic) {
     if (characteristic.name === 'tx') this.tx = null
+  }
+
+  flushPendingOut() {
+    if (this.tx == null || this.pendingOut.length === 0) return
+    const queued = this.pendingOut
+    this.pendingOut = []
+    for (let i = 0; i < queued.length; i++) {
+      this.writeChunks(queued[i])
+    }
+    trace(`[buildagotchi_ble] flushed ${queued.length} queued notifies\n`)
   }
 
   onCharacteristicWritten(characteristic, value) {
@@ -254,8 +273,18 @@ class BuildagotchiServer extends BLEServer {
     }, SAFE_MODE_MS)
   }
 
-  send(t, p) {
+  writeChunks(line) {
     if (this.tx == null) return
+    try {
+      for (let i = 0; i < line.length; i += NUS_CHUNK) {
+        this.notifyValue(this.tx, ArrayBuffer.fromString(line.slice(i, i + NUS_CHUNK)))
+      }
+    } catch (e) {
+      trace(`[buildagotchi_ble] notify error ${e}\n`)
+    }
+  }
+
+  send(t, p) {
     const envelope = {
       v: 1,
       seq: this.outSeq++,
@@ -263,19 +292,106 @@ class BuildagotchiServer extends BLEServer {
       ts: Date.now(),
       p: p || {},
     }
+    // ASCII JSON — char length == byte length; chunk for NUS maxBytes.
     const line = `${JSON.stringify(envelope)}\n`
-    try {
-      this.notifyValue(this.tx, ArrayBuffer.fromString(line))
-    } catch (e) {
-      trace(`[buildagotchi_ble] notify error ${e}\n`)
+    if (this.tx == null) {
+      // Keep a short queue so early press/release aren't lost before CCCD.
+      if (this.pendingOut.length < 16) this.pendingOut.push(line)
+      return
     }
+    this.writeChunks(line)
+  }
+
+  emitTouch(gesture) {
+    this.send('event', { kind: 'touch', detail: { gesture } })
+  }
+
+  emitButton(button, action) {
+    this.send('event', { kind: 'button', detail: { button, action } })
+  }
+}
+
+function setupTouch(server, robot) {
+  const panel = robot.touchPanel
+  if (panel == null) {
+    trace('[buildagotchi_ble] no touchPanel\n')
+    return
+  }
+  let lastFwd = null
+  let lastBwd = null
+  try {
+    // More sensitive than defaults — kit was stuck at [0,0,0] with level 3.
+    panel.configure({ sensitivityType: 1, sensitivityLevel: 0 })
+    trace('[buildagotchi_ble] touch sensitivity high/0\n')
+  } catch (e) {
+    trace(`[buildagotchi_ble] touch configure error ${e}\n`)
+  }
+  let sawNonZero = false
+  panel.onSample = (sample, _ticks) => {
+    if (sawNonZero) return
+    for (let i = 0; i < sample.length; i++) {
+      if (sample[i] > 0) {
+        sawNonZero = true
+        trace(`[buildagotchi_ble] touch FIRST non-zero ${JSON.stringify(sample)}\n`)
+        return
+      }
+    }
+  }
+  panel.onGesture = (gesture) => {
+    const type = gesture.type
+    if (typeof type !== 'string') return
+    trace(`[buildagotchi_ble] gesture ${type}\n`)
+    server.emitTouch(type)
+    if (type === 'forwardSwipe') lastFwd = gesture.ticks
+    else if (type === 'backwardSwipe') lastBwd = gesture.ticks
+    if (
+      lastFwd != null &&
+      lastBwd != null &&
+      Math.abs(lastFwd - lastBwd) <= PET_WINDOW_MS
+    ) {
+      trace('[buildagotchi_ble] gesture pet\n')
+      server.emitTouch('pet')
+      lastFwd = null
+      lastBwd = null
+    }
+  }
+  trace('[buildagotchi_ble] touchPanel hooked\n')
+}
+
+function setupButtons(server, robot) {
+  const buttons = robot.button
+  if (buttons == null) {
+    trace('[buildagotchi_ble] no robot.button\n')
+    return
+  }
+  const map = [
+    ['a', 'A'],
+    ['b', 'B'],
+    ['c', 'C'],
+  ]
+  for (let i = 0; i < map.length; i++) {
+    const key = map[i][0]
+    const label = map[i][1]
+    const btn = buttons[key]
+    if (btn == null) {
+      trace(`[buildagotchi_ble] no button.${key}\n`)
+      continue
+    }
+    btn.onChanged = function () {
+      if (!this.read()) return
+      trace(`[buildagotchi_ble] button ${label}\n`)
+      server.emitButton(label, 'press')
+    }
+    trace(`[buildagotchi_ble] button.${key} hooked\n`)
   }
 }
 
 export function onRobotCreated(robot) {
   trace('[buildagotchi_ble] start\n')
   try {
-    new BuildagotchiServer(robot)
+    const server = new BuildagotchiServer(robot)
+    setupTouch(server, robot)
+    setupButtons(server, robot)
   } catch (e) {
     trace(`[buildagotchi_ble] BLE error ${e}\n`)
   }
