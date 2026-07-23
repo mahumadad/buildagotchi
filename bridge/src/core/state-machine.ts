@@ -3,7 +3,7 @@ import { interpolate, truncate } from '../personality/interpolate.js';
 import type { PersonalityManager } from '../personality/personality.js';
 import type { ActiveAttention } from './attention.js';
 import type { BalloonHistory } from './balloon-history.js';
-import type { Emotion, Event, LedCommand, ResolvedState, Severity } from './events.js';
+import { EMOTIONS, type Emotion, type Event, type LedCommand, type ResolvedState, type Severity } from './events.js';
 
 const logger = pino({ name: 'state-machine' });
 
@@ -303,7 +303,9 @@ export class StateMachine {
     // from payload if present, otherwise CLEARS — never inherits, because an
     // agent forcing a face has no business dragging another event's text.
     if (e.source === 'mcp:set_face' && typeof e.payload.emotion === 'string') {
-      state = { ...state, emotion: e.payload.emotion as Emotion };
+      if (EMOTIONS.includes(e.payload.emotion as Emotion)) {
+        state = { ...state, emotion: e.payload.emotion as Emotion };
+      }
       const explicit = typeof e.payload.balloon === 'string' ? (e.payload.balloon as string) : '';
       balloon = { text: explicit, policy: 'transient' };
     }
