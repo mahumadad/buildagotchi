@@ -10,6 +10,7 @@ import type { Platform } from '../src/platform/platform.js';
 import { EventRecorder } from '../src/recorder/recorder.js';
 import { Metrics } from '../src/server/metrics.js';
 import { BridgeServer } from '../src/server/server.js';
+import { makePlatform } from './helpers/factories.js';
 
 /**
  * `Response.json()` is typed `unknown`. These tests assert on JSON shapes the
@@ -23,14 +24,6 @@ async function json(res: Response): Promise<any> {
 
 
 const STORED_TOKEN = 'stored-secret-token';
-
-function makePlatform(token: string | null): Platform {
-  return {
-    getSecret: vi.fn().mockResolvedValue(token),
-    setSecret: vi.fn().mockResolvedValue(undefined),
-    dataDir: () => '/tmp/buildagotchi-test',
-  };
-}
 
 function makeAm(): AttentionManager {
   return new AttentionManager(
@@ -93,7 +86,10 @@ describe('BridgeServer', () => {
       { onAccepted: (e) => accepted.push(e) },
     );
     metrics = new Metrics();
-    platform = makePlatform(opts.token === undefined ? STORED_TOKEN : opts.token);
+    platform = makePlatform({
+      getSecret: vi.fn().mockResolvedValue(opts.token === undefined ? STORED_TOKEN : opts.token),
+      dataDir: () => '/tmp/buildagotchi-test',
+    });
 
     server = new BridgeServer({
       host: '127.0.0.1',

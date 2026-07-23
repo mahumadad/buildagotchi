@@ -7,10 +7,10 @@ import { BalloonHistory } from '../src/core/balloon-history.js';
 import { EventBus } from '../src/core/bus.js';
 import { StateMachine } from '../src/core/state-machine.js';
 import { PersonalityManager } from '../src/personality/personality.js';
-import type { Platform } from '../src/platform/platform.js';
 import { EventRecorder } from '../src/recorder/recorder.js';
 import { Metrics } from '../src/server/metrics.js';
 import { BridgeServer, type HealthPayload } from '../src/server/server.js';
+import { makePlatform } from './helpers/factories.js';
 
 const CTX = {
   metabolicScore: null,
@@ -33,15 +33,6 @@ const NULL_HEALTH: HealthPayload = {
   adapters: {},
   transport: { kind: 'stub', connected: false, reconnects: 0, latency: { p50: 0, p95: 0 } },
 };
-
-function makePlatform(): Platform {
-  return {
-    getSecret: vi.fn().mockResolvedValue(null),
-    setSecret: vi.fn(),
-    unpackClaudeCodeStateDir: vi.fn().mockResolvedValue(''),
-    home: () => '/tmp',
-  } as unknown as Platform;
-}
 
 async function setupServer(opts: { simulate: boolean; recorderDir: string }) {
   const metrics = new Metrics();

@@ -10,17 +10,10 @@ import type { Platform } from '../src/platform/platform.js';
 import { EventRecorder } from '../src/recorder/recorder.js';
 import { Metrics } from '../src/server/metrics.js';
 import { BridgeServer } from '../src/server/server.js';
+import { makePlatform } from './helpers/factories.js';
 
 const STORED_TOKEN = 'stored-secret-token';
 const PUBLIC_DIR = join(import.meta.dirname, '..', 'src', 'server', 'public');
-
-function makePlatform(): Platform {
-  return {
-    getSecret: vi.fn().mockResolvedValue(STORED_TOKEN),
-    setSecret: vi.fn().mockResolvedValue(undefined),
-    dataDir: () => '/tmp/buildagotchi-test',
-  };
-}
 
 function makeAm(): AttentionManager {
   return new AttentionManager(
@@ -119,7 +112,10 @@ describe('BridgeServer dashboard (M8)', () => {
     recorder = new EventRecorder({ dir, retentionDays: 30 });
     bus = new EventBus({ windowMs: 60_000, autoMuteAfter: 10 }, { onAccepted: () => {} });
     metrics = new Metrics();
-    platform = makePlatform();
+    platform = makePlatform({
+      getSecret: vi.fn().mockResolvedValue(STORED_TOKEN),
+      dataDir: () => '/tmp/buildagotchi-test',
+    });
     claudeAdapter = makeClaudeAdapter();
 
     server = new BridgeServer({

@@ -6,7 +6,7 @@ import { ClaudeAdapter } from '../src/adapters/claude-adapter.js';
 import { AttentionManager } from '../src/core/attention.js';
 import { EventBus } from '../src/core/bus.js';
 import { type Event, newEvent } from '../src/core/events.js';
-import type { Metrics } from '../src/server/metrics.js';
+import { makeStubMetrics } from './helpers/factories.js';
 
 /**
  * The seam nobody tested: hook → ClaudeAdapter → EventBus → AttentionManager.
@@ -32,18 +32,11 @@ import type { Metrics } from '../src/server/metrics.js';
 
 const CRITICAL_TTL_MS = 30_000;
 
-function makeMetrics(): Metrics {
-  return {
-    counter: () => ({ inc: vi.fn() }),
-    gauge: () => ({ set: vi.fn() }),
-  } as unknown as Metrics;
-}
-
 function setup(criticalCommands: string[] = ['rm', 'sudo']) {
   const dir = mkdtempSync(join(tmpdir(), 'resolve-chain-'));
   const stateDir = join(dir, 'claude-state');
   mkdirSync(stateDir, { recursive: true });
-  const metrics = makeMetrics();
+  const metrics = makeStubMetrics();
 
   const attentionManager = new AttentionManager(
     {

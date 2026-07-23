@@ -9,18 +9,10 @@ import { type Event, newEvent } from '../src/core/events.js';
 import { StateMachine } from '../src/core/state-machine.js';
 import { loadPreset } from '../src/personality/loader.js';
 import { PersonalityManager } from '../src/personality/personality.js';
-import type { Platform } from '../src/platform/platform.js';
 import { EventRecorder } from '../src/recorder/recorder.js';
 import { Metrics } from '../src/server/metrics.js';
 import { BridgeServer } from '../src/server/server.js';
-
-function makePlatform(): Platform {
-  return {
-    getSecret: vi.fn().mockResolvedValue('test-token'),
-    setSecret: vi.fn().mockResolvedValue(undefined),
-    dataDir: () => '/tmp/buildagotchi-test',
-  };
-}
+import { makePlatform } from './helpers/factories.js';
 
 describe('Phase 2 integration', () => {
   let dir: string;
@@ -121,7 +113,10 @@ describe('Phase 2 integration', () => {
       simulate: true,
       logger: { warn: () => {}, error: () => {}, info: () => {} } as never,
       metrics,
-      platform: makePlatform(),
+      platform: makePlatform({
+        getSecret: vi.fn().mockResolvedValue('test-token'),
+        dataDir: () => '/tmp/buildagotchi-test',
+      }),
       bus,
       recorder,
       attentionManager,

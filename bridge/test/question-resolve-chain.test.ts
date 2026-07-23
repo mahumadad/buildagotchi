@@ -6,7 +6,7 @@ import { ClaudeAdapter } from '../src/adapters/claude-adapter.js';
 import { AttentionManager } from '../src/core/attention.js';
 import { EventBus } from '../src/core/bus.js';
 import { type Event, newEvent } from '../src/core/events.js';
-import type { Metrics } from '../src/server/metrics.js';
+import { makeStubMetrics } from './helpers/factories.js';
 
 /**
  * Same seam as permission-resolve-chain.test.ts: hook → adapter → bus → AM.
@@ -14,18 +14,11 @@ import type { Metrics } from '../src/server/metrics.js';
  * in the terminal (PostToolUse) retires the balloon.
  */
 
-function makeMetrics(): Metrics {
-  return {
-    counter: () => ({ inc: vi.fn() }),
-    gauge: () => ({ set: vi.fn() }),
-  } as unknown as Metrics;
-}
-
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'question-resolve-chain-'));
   const stateDir = join(dir, 'claude-state');
   mkdirSync(stateDir, { recursive: true });
-  const metrics = makeMetrics();
+  const metrics = makeStubMetrics();
 
   const attentionManager = new AttentionManager(
     {

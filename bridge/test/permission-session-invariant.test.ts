@@ -6,7 +6,7 @@ import { ClaudeAdapter } from '../src/adapters/claude-adapter.js';
 import { AttentionManager } from '../src/core/attention.js';
 import { EventBus } from '../src/core/bus.js';
 import type { Event } from '../src/core/events.js';
-import type { Metrics } from '../src/server/metrics.js';
+import { makeStubMetrics } from './helpers/factories.js';
 
 /**
  * INVARIANT: no permission may be active (or queued) in the AttentionManager
@@ -26,13 +26,6 @@ import type { Metrics } from '../src/server/metrics.js';
  */
 
 const STALE_TIMEOUT_MS = 1_800_000;
-
-function makeMetrics(): Metrics {
-  return {
-    counter: () => ({ inc: vi.fn() }),
-    gauge: () => ({ set: vi.fn() }),
-  } as unknown as Metrics;
-}
 
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'perm-invariant-'));
@@ -79,7 +72,7 @@ function setup() {
     },
     {
       logger: { warn: vi.fn(), info: vi.fn() },
-      metrics: makeMetrics(),
+      metrics: makeStubMetrics(),
       criticalCommands: ['rm', 'sudo'],
       stateDir,
       projectsDir: join(dir, 'no-projects'),

@@ -7,10 +7,10 @@ import { AttentionManager } from '../src/core/attention.js';
 import { EventBus } from '../src/core/bus.js';
 import type { Event } from '../src/core/events.js';
 import { StateMachine } from '../src/core/state-machine.js';
-import type { Platform } from '../src/platform/platform.js';
 import { EventRecorder } from '../src/recorder/recorder.js';
 import { Metrics } from '../src/server/metrics.js';
 import { BridgeServer, type BridgeServerOptions } from '../src/server/server.js';
+import { makePlatform } from './helpers/factories.js';
 
 /**
  * Harness copied from server-dashboard.test.ts / integration-fase2.test.ts:
@@ -18,14 +18,6 @@ import { BridgeServer, type BridgeServerOptions } from '../src/server/server.js'
  * AttentionManager/StateMachine (no rules needed for these tests), and a
  * minimal ClaudeAdapter stub for the pending-permission tests.
  */
-
-function makePlatform(): Platform {
-  return {
-    getSecret: vi.fn().mockResolvedValue('stored-secret-token'),
-    setSecret: vi.fn().mockResolvedValue(undefined),
-    dataDir: () => '/tmp/buildagotchi-test',
-  };
-}
 
 function makeAm(): AttentionManager {
   return new AttentionManager(
@@ -140,7 +132,10 @@ describe('BridgeServer touch gestures', () => {
       simulate: true,
       logger: { warn: () => {}, error: () => {}, info: () => {} } as never,
       metrics: new Metrics(),
-      platform: makePlatform(),
+      platform: makePlatform({
+        getSecret: vi.fn().mockResolvedValue('stored-secret-token'),
+        dataDir: () => '/tmp/buildagotchi-test',
+      }),
       bus,
       recorder,
       attentionManager,
@@ -223,6 +218,33 @@ describe('BridgeServer touch gestures', () => {
     tapHead(server);
     vi.advanceTimersByTime(1_000); // past the 700ms window
     tapHead(server);
+    expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
+  });
+
+  it('a double-tap across different sessions does not approve (cross-session guard)', () => {
+    const sessions = new Map<string, Record<string, unknown>>([
+      ['s1', { sessionId: 's1', cwd: '/tmp/p', state: 'permission_pending', lastEventAt: Date.now(), pendingPermission: { eventId: 'e1', isCritical: true } }],
+      ['s2', { sessionId: 's2', cwd: '/tmp/q', state: 'permission_pending', lastEventAt: Date.now(), pendingPermission: { eventId: 'e2', isCritical: true } }],
+    ]);
+    const claudeAdapter = {
+      sessions: vi.fn(() => sessions),
+      resolvePermission: vi.fn(() => 'e1'),
+      onSessionChangeCallback: null,
+      health: () => ({ status: 'HEALTHY' }),
+      name: 'claude',
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    } as unknown as ClaudeAdapter;
+    const { server } = makeServer(claudeAdapter);
+
+    tapHead(server);
+    vi.advanceTimersByTime(100);
+
+    // Between taps, s1 disappears and s2 is now first in iteration order
+    sessions.delete('s1');
+
+    tapHead(server);
+    // The second tap arms s2 but does NOT approve it (sessionId mismatch)
     expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
   });
 

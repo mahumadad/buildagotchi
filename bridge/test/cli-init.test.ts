@@ -1,19 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runInit } from '../src/cli.js';
 import { TOKEN_ACCOUNT, TOKEN_SERVICE } from '../src/platform/platform.js';
-import type { Platform } from '../src/platform/platform.js';
-
-function makePlatform(stored: string | null): Platform {
-  return {
-    getSecret: vi.fn().mockResolvedValue(stored),
-    setSecret: vi.fn().mockResolvedValue(undefined),
-    dataDir: () => '/tmp/buildagotchi-test',
-  };
-}
+import { makePlatform } from './helpers/factories.js';
 
 describe('runInit', () => {
   it('generates and stores a new token, printing a curl example once', async () => {
-    const platform = makePlatform(null);
+    const platform = makePlatform({
+      getSecret: vi.fn().mockResolvedValue(null),
+      dataDir: () => '/tmp/buildagotchi-test',
+    });
     const print = vi.fn();
     await runInit({ rotate: false }, platform, print);
 
@@ -30,7 +25,10 @@ describe('runInit', () => {
   });
 
   it('does not overwrite an existing token without --rotate', async () => {
-    const platform = makePlatform('existing-token');
+    const platform = makePlatform({
+      getSecret: vi.fn().mockResolvedValue('existing-token'),
+      dataDir: () => '/tmp/buildagotchi-test',
+    });
     const print = vi.fn();
     await runInit({ rotate: false }, platform, print);
 
@@ -39,7 +37,10 @@ describe('runInit', () => {
   });
 
   it('regenerates the token when --rotate is set, even if one exists', async () => {
-    const platform = makePlatform('existing-token');
+    const platform = makePlatform({
+      getSecret: vi.fn().mockResolvedValue('existing-token'),
+      dataDir: () => '/tmp/buildagotchi-test',
+    });
     const print = vi.fn();
     await runInit({ rotate: true }, platform, print);
 
