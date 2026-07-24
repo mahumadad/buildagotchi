@@ -319,12 +319,15 @@ describe('BridgeServer touch gestures', () => {
     expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
   });
 
-  it('a long press triggers SLEEP after the hold duration', () => {
+  it('a long press does NOT sleep the robot (SLEEP-on-hold disabled on CoreS3)', () => {
+    // The Si12T sticks in "contact" for ~16s of idle drift (measured
+    // 2026-07-24), which read as a hold and slept the robot unprompted with no
+    // button to wake it. Hold is now a no-op; mode changes go through /mode.
     const { server, attentionManager } = makeServer();
     server.handleDeviceInput('touch', { gesture: 'press' });
     expect(attentionManager.snapshot().mode).not.toBe('SLEEP');
     vi.advanceTimersByTime(2_000);
-    expect(attentionManager.snapshot().mode).toBe('SLEEP');
+    expect(attentionManager.snapshot().mode).not.toBe('SLEEP');
   });
 
   it('a head tap with a pending question focuses the terminal and consumes the tap', () => {

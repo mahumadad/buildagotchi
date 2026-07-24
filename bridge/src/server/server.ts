@@ -754,9 +754,15 @@ export class BridgeServer {
   #handleGestureAction(action: import('./gesture-recognizer.js').GestureAction): void {
     switch (action.type) {
       case 'hold':
-        this.#opts.attentionManager.setMode('SLEEP');
-        this.#opts.stateMachine.apply(this.#opts.attentionManager.snapshot().active);
-        this.notifyState();
+        // Long-press-head → SLEEP is disabled on this hardware. Measured
+        // 2026-07-24: the CoreS3 Si12T occasionally sticks in "contact" for
+        // ~16s of idle drift, which the recognizer reads as a hold and put the
+        // robot to SLEEP unprompted — dropping every non-critical event until
+        // someone cycled the mode. The CoreS3 has no button to wake it, so an
+        // accidental sleep is pure loss; deliberate mode changes go through
+        // POST /mode instead. Kept as a no-op so a real hold does nothing
+        // rather than something surprising.
+        this.#opts.logger.info({}, 'head hold ignored (SLEEP-on-hold disabled)');
         return;
 
       case 'tap': {
