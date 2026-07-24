@@ -171,6 +171,7 @@ function renderState(state) {
     const rs = state.resolvedState;
     if (rs.emotion) faceRenderer.setEmotion(rs.emotion);
     if (rs.decorators) faceRenderer.setDecorators(rs.decorators);
+    faceRenderer.setGaze(rs.gaze);
     // M12b: the server is now authoritative for the balloon (S2.5.1). rs.balloon
     // is always a string under the new contract (S2.5.11): '' means clear.
     faceRenderer.setBalloon(rs.balloon || null);

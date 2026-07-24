@@ -448,6 +448,7 @@ export class FaceRenderer {
   #lastTime = 0;
   #tickCount = 0;
   #idle = false;
+  #gazeBias = 0;
 
   constructor(canvas) {
     this.#canvas = canvas;
@@ -460,6 +461,12 @@ export class FaceRenderer {
       createBreathModifier({ duration: 6000 }),
       createSaccadeModifier({ updateMin: 300, updateMax: 2000, gain: 0.2 }),
       createIdleExpressionModifier({ isIdle: () => this.#idle }),
+      // gaze override — runs AFTER saccade so a fixed direction wins.
+      (_tickMs, face) => {
+        if (this.#gazeBias === 0) return;
+        face.eyes.left.gazeX = this.#gazeBias;
+        face.eyes.right.gazeX = this.#gazeBias;
+      },
     ];
   }
 
@@ -485,6 +492,13 @@ export class FaceRenderer {
     this.#activeDecorators = keys
       .filter((k) => DECORATOR_MAP[k])
       .map((k) => DECORATOR_MAP[k]({ w: DISPLAY_W, h: DISPLAY_H }));
+  }
+
+  // Fixed gaze direction (left/right/center). Runs as a post-saccade modifier
+  // so a directed state.gaze wins over the random micro-movements. bias ±5 →
+  // 10px pupil shift (drawEye doubles gazeX). 0 = center = free saccade.
+  setGaze(direction) {
+    this.#gazeBias = direction === 'left' ? -5 : direction === 'right' ? 5 : 0;
   }
 
   setBalloon(text) {
