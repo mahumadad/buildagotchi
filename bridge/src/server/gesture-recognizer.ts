@@ -20,7 +20,13 @@ export class GestureRecognizer {
   #onAction: ((action: GestureAction) => void) | null = null;
 
   constructor(opts?: GestureRecognizerOptions) {
-    this.#tapMs = opts?.tapMs ?? 300;
+    // A press shorter than this is a tap; longer (up to holdMs) is nothing;
+    // holdMs or longer is a hold. 300ms was too tight: measured on hardware
+    // 2026-07-24, deliberate finger taps on the CoreS3 lasted 180–800ms
+    // (press→release), so most real taps fell through as "not a tap" and the
+    // robot ignored them. 900ms captures a comfortable human tap while staying
+    // well under the 2000ms hold.
+    this.#tapMs = opts?.tapMs ?? 900;
     this.#holdMs = opts?.holdMs ?? 2000;
     this.#now = opts?.now ?? Date.now;
   }

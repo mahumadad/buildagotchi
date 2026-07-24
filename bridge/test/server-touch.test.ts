@@ -186,6 +186,35 @@ describe('BridgeServer touch gestures', () => {
     server.handleDeviceInput('touch', { gesture: 'release' });
   }
 
+  function tapHeadFor(server: BridgeServer, durationMs: number) {
+    server.handleDeviceInput('touch', { gesture: 'press' });
+    vi.advanceTimersByTime(durationMs);
+    server.handleDeviceInput('touch', { gesture: 'release' });
+  }
+
+  it('a press up to ~900ms counts as a tap (real finger taps measured 180-800ms on hardware)', () => {
+    // Measured 2026-07-24: deliberate taps on the CoreS3 lasted 180-800ms
+    // press→release. Two 600ms taps must still approve; the old 300ms tap
+    // window silently dropped them.
+    const claudeAdapter = makeClaudeAdapterWithPendingPermission(false);
+    claudeAdapter.resolvePermission = vi.fn(() => 'e1');
+    const { server } = makeServer(claudeAdapter);
+    tapHeadFor(server, 600);
+    vi.advanceTimersByTime(100);
+    tapHeadFor(server, 600);
+    expect(claudeAdapter.resolvePermission).toHaveBeenCalledWith('s1', 'approved');
+  });
+
+  it('a press of ~1500ms is not a tap (between tap and hold — ignored)', () => {
+    const claudeAdapter = makeClaudeAdapterWithPendingPermission(false);
+    claudeAdapter.resolvePermission = vi.fn(() => 'e1');
+    const { server } = makeServer(claudeAdapter);
+    tapHeadFor(server, 1500);
+    vi.advanceTimersByTime(100);
+    tapHeadFor(server, 1500);
+    expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
+  });
+
   it('a single head tap on a non-critical permission only arms the double-tap guard (isolated Si12T phantoms cannot auto-approve)', () => {
     // Measured 2026-07-24: the CoreS3 Si12T fires isolated phantom press/release
     // events long after any servo activity — one such phantom auto-approved a
