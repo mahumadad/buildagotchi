@@ -54,7 +54,9 @@ function makeStateMachine(): StateMachine {
   });
 }
 
-function makeClaudeAdapterWithPendingPermission(isCritical = false) {
+function makeClaudeAdapterWithPendingPermission(isCritical = false, shownAt?: number) {
+  const pending: Record<string, unknown> = { eventId: 'e1', isCritical };
+  if (shownAt !== undefined) pending.shownAt = shownAt;
   const sessions = new Map<string, Record<string, unknown>>([
     [
       's1',
@@ -63,7 +65,7 @@ function makeClaudeAdapterWithPendingPermission(isCritical = false) {
         cwd: '/tmp/p',
         state: 'permission_pending',
         lastEventAt: Date.now(),
-        pendingPermission: { eventId: 'e1', isCritical },
+        pendingPermission: pending,
       },
     ],
   ]);
@@ -184,10 +186,50 @@ describe('BridgeServer touch gestures', () => {
     server.handleDeviceInput('touch', { gesture: 'release' });
   }
 
-  it('a single head tap approves a non-critical pending permission', () => {
+  it('a single head tap on a non-critical permission only arms the double-tap guard (isolated Si12T phantoms cannot auto-approve)', () => {
+    // Measured 2026-07-24: the CoreS3 Si12T fires isolated phantom press/release
+    // events long after any servo activity — one such phantom auto-approved a
+    // plain `echo` permission ~94s after it was shown. Requiring double-tap for
+    // EVERY permission makes phantom approval effectively impossible.
     const claudeAdapter = makeClaudeAdapterWithPendingPermission(false);
     claudeAdapter.resolvePermission = vi.fn(() => 'e1');
     const { server } = makeServer(claudeAdapter);
+    tapHead(server);
+    expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
+  });
+
+  it('two head taps within the window approve a non-critical permission (same shape as critical)', () => {
+    const claudeAdapter = makeClaudeAdapterWithPendingPermission(false);
+    claudeAdapter.resolvePermission = vi.fn(() => 'e1');
+    const { server } = makeServer(claudeAdapter);
+    tapHead(server);
+    vi.advanceTimersByTime(100);
+    tapHead(server);
+    expect(claudeAdapter.resolvePermission).toHaveBeenCalledTimes(1);
+    expect(claudeAdapter.resolvePermission).toHaveBeenCalledWith('s1', 'approved');
+  });
+
+  it('a head tap within the settle cooldown after showing the permission is dropped (phantom guard)', () => {
+    // Measured 2026-07-24: the servo nod on a permission jostles the Si12T for
+    // 6+ seconds; those phantom press/release events used to auto-approve the
+    // very permission being shown. shownAt=now → tap arrives inside the 3s cooldown.
+    const claudeAdapter = makeClaudeAdapterWithPendingPermission(false, Date.now());
+    claudeAdapter.resolvePermission = vi.fn(() => 'e1');
+    const { server } = makeServer(claudeAdapter);
+    tapHead(server);
+    // No double-tap guard armed either — the cooldown drops the tap entirely,
+    // so a follow-up phantom in the next 700ms can't push it over the line.
+    expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
+  });
+
+  it('a head tap after the settle cooldown only arms the double-tap guard (still needs two taps)', () => {
+    // shownAt=5s ago → outside the cooldown window; universal double-tap kicks in.
+    const claudeAdapter = makeClaudeAdapterWithPendingPermission(false, Date.now() - 5_000);
+    claudeAdapter.resolvePermission = vi.fn(() => 'e1');
+    const { server } = makeServer(claudeAdapter);
+    tapHead(server);
+    expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100);
     tapHead(server);
     expect(claudeAdapter.resolvePermission).toHaveBeenCalledWith('s1', 'approved');
   });

@@ -131,6 +131,41 @@ describe('BridgeServer', () => {
     expect(typeof body.uptimeMs).toBe('number');
   });
 
+  it('POST /mode cycles AM mode with auth (NORMAL→FOCUS→SLEEP→NORMAL)', async () => {
+    // In production the CoreS3 has no A/B/C buttons and /sim/mode is blocked,
+    // so without this endpoint an accidental SLEEP transition (long-press-head)
+    // is one-way and blocks every non-critical event. Auth-gated like /events.
+    await start();
+    const stateBefore = await json(await fetch(`${baseUrl}/state`));
+    expect(stateBefore.mode).toBe('NORMAL');
+
+    // Reject without token.
+    const noAuth = await fetch(`${baseUrl}/mode`, { method: 'POST' });
+    expect(noAuth.status).toBe(401);
+
+    // NORMAL → FOCUS
+    const r1 = await fetch(`${baseUrl}/mode`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${STORED_TOKEN}` },
+    });
+    expect(r1.status).toBe(200);
+    expect((await json(r1)).mode).toBe('FOCUS');
+
+    // FOCUS → SLEEP
+    const r2 = await fetch(`${baseUrl}/mode`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${STORED_TOKEN}` },
+    });
+    expect((await json(r2)).mode).toBe('SLEEP');
+
+    // SLEEP → NORMAL (this is the wake case the endpoint exists for)
+    const r3 = await fetch(`${baseUrl}/mode`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${STORED_TOKEN}` },
+    });
+    expect((await json(r3)).mode).toBe('NORMAL');
+  });
+
   it('GET /health returns bridge ok + adapters + transport', async () => {
     await start();
     const res = await fetch(`${baseUrl}/health`);

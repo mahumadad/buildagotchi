@@ -39,6 +39,8 @@ import type { Metrics } from './metrics.js';
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1MB (SPEC-IMPL-FASE-1A §5.3)
 const SSE_KEEPALIVE_MS = 15_000;
+/** How many raw touch readings to keep for D-17 sensitivity diagnostics. */
+const TOUCH_SAMPLE_BUFFER = 500;
 const DEFAULT_EVENTS_LIMIT = 50;
 const MAX_EVENTS_LIMIT = 200;
 
@@ -214,9 +216,22 @@ export class BridgeServer {
   #hookBucket: TokenBucket;
   #sseClients = new Set<ServerResponse>();
   #sseKeepAlive: NodeJS.Timeout | null = null;
+  /** D-17 diagnostics: recent raw Si12T readings + gestures. See handleDeviceInput. */
+  #touchSamples: Array<{ ts: number; gesture: string; zones: unknown[] }> = [];
   #lastHeadTapAt = 0;
   #lastHeadTapSessionId: string | null = null;
   #DOUBLE_TAP_WINDOW_MS = 700;
+  /**
+   * How long after a permission becomes visible on the robot to ignore
+   * head-taps. Measured 2026-07-24: showing a permission moves the head
+   * (servo pitch nod) and the capacitive Si12T keeps emitting phantom
+   * press/release for 6+ seconds — those got interpreted as taps and
+   * auto-approved the very permission being shown. A real user waits at
+   * least this long to read the balloon before deciding to approve, so
+   * dropping taps inside the window has essentially zero UX cost while
+   * closing the servo→touch→auto-approve loop end-to-end.
+   */
+  #PERMISSION_TAP_COOLDOWN_MS = 3_000;
   #gesture: GestureRecognizer;
 
   constructor(opts: BridgeServerOptions) {
@@ -357,6 +372,10 @@ export class BridgeServer {
     if (method === 'POST' && path.startsWith('/focus/')) {
       return this.#handleFocus(req, res, path);
     }
+    if (method === 'GET' && path === '/debug/touch-samples') {
+      return this.#handleTouchSamples(res);
+    }
+    if (method === 'POST' && path === '/mode') return this.#handleCycleMode(req, res);
     if (method === 'POST' && path === '/sim/mode') return this.#handleSimMode(res);
     if (method === 'POST' && path === '/sim/emotion') return this.#handleSimEmotion(req, res);
     if (method === 'POST' && path === '/sim/button') return this.#handleSimButton(req, res);
@@ -715,6 +734,20 @@ export class BridgeServer {
 
     const gesture = (detail as { gesture?: unknown })?.gesture;
     if (typeof gesture !== 'string') return;
+    // D-17 diagnostics: the firmware streams raw Si12T readings as
+    // `gesture: 'sample'` (throttled, only when a zone is non-zero). They are
+    // not gestures, so they never reach the recognizer — but their amplitude
+    // and frequency while nobody is touching the robot is exactly the evidence
+    // needed to pick a sensitivity level. Kept in a ring buffer, readable at
+    // GET /debug/touch-samples, so measuring doesn't pollute the recorder.
+    const zones = (detail as { zones?: unknown }).zones;
+    this.#touchSamples.push({
+      ts: Date.now(),
+      gesture,
+      zones: Array.isArray(zones) ? zones : [],
+    });
+    if (this.#touchSamples.length > TOUCH_SAMPLE_BUFFER) this.#touchSamples.shift();
+    if (gesture === 'sample') return;
     this.#gesture.input(gesture);
   }
 
@@ -760,6 +793,27 @@ export class BridgeServer {
 
   #handleSimMode(res: ServerResponse): void {
     if (!this.#requireSimulation(res)) return;
+    sendJson(res, 200, { mode: this.#cycleMode() });
+  }
+
+  /**
+   * Cycle the AM mode (NORMAL → FOCUS → SLEEP → NORMAL). Same effect as
+   * pressing the physical "C" button on a stack-chan with buttons — but the
+   * CoreS3 has no A/B/C buttons, so without this endpoint a mode transition
+   * (e.g. long-press-head → SLEEP) is one-way and there's no way to wake up
+   * short of restarting the bridge. Auth-gated (same as every mutating POST).
+   */
+  /** D-17 diagnostics: raw Si12T readings, newest last. Read-only, no auth. */
+  #handleTouchSamples(res: ServerResponse): void {
+    sendJson(res, 200, { count: this.#touchSamples.length, samples: this.#touchSamples });
+  }
+
+  #handleCycleMode(req: IncomingMessage, res: ServerResponse): void {
+    const authError = this.#checkAuth(req);
+    if (authError) {
+      sendJson(res, authError.status, authError.body);
+      return;
+    }
     sendJson(res, 200, { mode: this.#cycleMode() });
   }
 
@@ -873,48 +927,57 @@ export class BridgeServer {
   }
 
   /**
-   * Head tap approval with double-tap guard for destructive commands.
-   * D6: critical permissions (rm, sudo, force push...) require a double head
-   * tap instead of a single one, so brushing the robot doesn't approve a
-   * dangerous command by accident. Non-critical permissions still approve on a
-   * single tap.
+   * Head tap approval with a double-tap requirement for EVERY permission.
+   *
+   * D6 originally asked for double-tap only on destructive commands. Testing on
+   * hardware 2026-07-24 showed the CoreS3 Si12T fires isolated phantom taps
+   * long after any servo activity — one such phantom was enough to auto-approve
+   * a plain `echo` permission ~94s after it was shown, without the user going
+   * anywhere near the robot. A settle cooldown right after the permission is
+   * shown isn't enough because the phantom can arrive at any time.
+   *
+   * Requiring two taps within DOUBLE_TAP_WINDOW_MS makes phantom approval
+   * effectively impossible (two unrelated noise events would need to align to
+   * <700ms) at the cost of one extra tap for benign commands — the smallest
+   * change that closes the class of "the robot approved itself" incidents.
    */
   #resolveHeadTap(): { approved: boolean; consumed: boolean; sessionId?: string } {
     if (!this.#opts.claudeAdapter) return { approved: false, consumed: false };
     for (const [sessionId, session] of this.#opts.claudeAdapter.sessions()) {
       const pending = session.pendingPermission;
       if (!pending) continue;
-      if (pending.isCritical) {
-        const now = Date.now();
-        if (
-          this.#lastHeadTapAt &&
-          this.#lastHeadTapSessionId === sessionId &&
-          now - this.#lastHeadTapAt <= this.#DOUBLE_TAP_WINDOW_MS
-        ) {
-          this.#lastHeadTapAt = 0;
-          this.#lastHeadTapSessionId = null;
-          const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, 'approved');
-          if (eventId) {
-            this.#opts.attentionManager.resolve(eventId, 'approved', 'head');
-            this.#opts.lifeStats?.recordResolution('approved', 'head');
-            focusTerminal(session.cwd, this.#opts.logger);
-            return { approved: true, consumed: true, sessionId };
-          }
-        }
-        this.#lastHeadTapAt = now;
-        this.#lastHeadTapSessionId = sessionId;
+      // Drop taps that arrive during the settle window after the permission
+      // became visible — they are almost certainly Si12T phantoms triggered by
+      // the servo nod, not real user intent. Consume the tap so it doesn't
+      // fall through to focusPendingQuestion either. See PERMISSION_TAP_COOLDOWN_MS.
+      const shownAt = pending.shownAt;
+      if (typeof shownAt === 'number' && Date.now() - shownAt < this.#PERMISSION_TAP_COOLDOWN_MS) {
+        this.#opts.logger.info(
+          { sessionId, sinceShownMs: Date.now() - shownAt },
+          'head tap ignored: permission still in settle window',
+        );
         return { approved: false, consumed: true };
       }
-      // Non-critical: single tap approves, just like before.
-      this.#lastHeadTapAt = 0;
-      this.#lastHeadTapSessionId = null;
-      const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, 'approved');
-      if (eventId) {
-        this.#opts.attentionManager.resolve(eventId, 'approved', 'head');
-        this.#opts.lifeStats?.recordResolution('approved', 'head');
-        focusTerminal(session.cwd, this.#opts.logger);
-        return { approved: true, consumed: true, sessionId };
+      const now = Date.now();
+      if (
+        this.#lastHeadTapAt &&
+        this.#lastHeadTapSessionId === sessionId &&
+        now - this.#lastHeadTapAt <= this.#DOUBLE_TAP_WINDOW_MS
+      ) {
+        this.#lastHeadTapAt = 0;
+        this.#lastHeadTapSessionId = null;
+        const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, 'approved');
+        if (eventId) {
+          this.#opts.attentionManager.resolve(eventId, 'approved', 'head');
+          this.#opts.lifeStats?.recordResolution('approved', 'head');
+          focusTerminal(session.cwd, this.#opts.logger);
+          return { approved: true, consumed: true, sessionId };
+        }
       }
+      // First tap: arm the double-tap guard. Isolated phantom taps stop here.
+      this.#lastHeadTapAt = now;
+      this.#lastHeadTapSessionId = sessionId;
+      return { approved: false, consumed: true };
     }
     return { approved: false, consumed: false };
   }

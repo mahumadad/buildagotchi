@@ -97,6 +97,14 @@ export interface ClaudeSession {
         isCritical: boolean;
         toolName?: string;
         summary?: string;
+        /**
+         * When the permission became visible on the robot (ms since epoch). A
+         * servo nod on `permission` jostles the capacitive Si12T for seconds,
+         * and the resulting phantom press/release used to auto-approve the
+         * very permission being shown. The tap resolver enforces a settle
+         * cooldown from this timestamp before it accepts any head-tap.
+         */
+        shownAt: number;
       }
     | undefined;
   /**
@@ -382,7 +390,8 @@ export class ClaudeAdapter implements Adapter {
             isCritical: boolean;
             toolName?: string;
             summary?: string;
-          } = { eventId: event.id, isCritical };
+            shownAt: number;
+          } = { eventId: event.id, isCritical, shownAt: Date.now() };
           if (command !== undefined) pending.command = command;
           if (session.lastToolUse) pending.toolName = session.lastToolUse.toolName;
           if (tool?.summary !== undefined) pending.summary = tool.summary;
