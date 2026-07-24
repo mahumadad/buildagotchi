@@ -118,6 +118,24 @@ describe('NobleTransport', () => {
     await expect(transport.connect()).rejects.toThrow(/No BLE device matching prefix/);
   });
 
+  it('detaches its discover listener after each failed scan (no leak across reconnects)', async () => {
+    // The reconnect loop calls connect() repeatedly. Leaving the `discover`
+    // listener attached per attempt piled them up on the shared noble object
+    // and produced "MaxListenersExceededWarning: 11 discover listeners" after
+    // ~10 failed reconnects, with every stale listener still doing prefix
+    // checks on each advertisement.
+    const ee = new EventEmitter() as NobleLike & EventEmitter;
+    ee.state = 'poweredOn';
+    ee.startScanningAsync = vi.fn(async () => {});
+    ee.stopScanningAsync = vi.fn(async () => {});
+    const transport = new NobleTransport({ nobleFactory: () => ee, scanTimeoutMs: 20 });
+
+    for (let i = 0; i < 5; i++) {
+      await expect(transport.connect()).rejects.toThrow(/No BLE device matching prefix/);
+    }
+    expect(ee.listenerCount('discover')).toBe(0);
+  });
+
   it('scans without NUS service filter (name-only ADV)', async () => {
     const peripheral = new FakePeripheral();
     const noble = makeNoble(peripheral);

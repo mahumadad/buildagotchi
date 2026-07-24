@@ -45,6 +45,7 @@ export interface NobleLike {
     event: 'discover',
     cb: (peripheral: NoblePeripheral & { advertisement: { localName?: string } }) => void,
   ): void;
+  removeListener?(event: string, cb: (...args: never[]) => void): void;
   removeAllListeners?(event?: string): void;
 }
 
@@ -183,10 +184,23 @@ export class NobleTransport implements Transport {
   #scanForDevice(noble: NobleLike): Promise<NoblePeripheral> {
     return new Promise((resolve, reject) => {
       let settled = false;
+
+      // Every exit path must detach `onDiscover`. Reconnect retries call this
+      // in a loop, so a listener left behind per attempt accumulates on the
+      // shared noble object — in practice that surfaced as
+      // "MaxListenersExceededWarning: 11 discover listeners" after ~10 failed
+      // reconnects, with every stale listener still running its prefix check
+      // on each advertisement seen.
+      const cleanup = () => {
+        clearTimeout(timer);
+        noble.removeListener?.('discover', onDiscover as (...args: never[]) => void);
+        void noble.stopScanningAsync().catch(() => undefined);
+      };
+
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        void noble.stopScanningAsync().catch(() => undefined);
+        cleanup();
         reject(
           new Error(
             `No BLE device matching prefix "${this.#prefix}" within ${this.#scanTimeoutMs}ms`,
@@ -201,8 +215,7 @@ export class NobleTransport implements Transport {
         if (!nameMatchesPrefix(name, this.#prefix)) return;
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
-        void noble.stopScanningAsync().catch(() => undefined);
+        cleanup();
         resolve(peripheral);
       };
 
@@ -212,7 +225,7 @@ export class NobleTransport implements Transport {
       void noble.startScanningAsync([], false).catch((err: unknown) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        cleanup();
         reject(err);
       });
     });
