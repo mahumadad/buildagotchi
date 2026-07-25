@@ -295,7 +295,10 @@ claude:
   # Context pressure → face. The window is DECLARED, never inferred: no field in
   # the transcript reports it. Set it to your model's real window, or the
   # percentages the robot reacts to are fiction.
-  contextWindowTokens: 200000
+  # The current Claude family (Opus 4.x, Sonnet 5, …) is 1M-context; 200000 made
+  # every session past ~20% report a false "100% — about to compact". Lower this
+  # only for a genuinely 200k-window model.
+  contextWindowTokens: 1000000
   contextWarnAt: 0.7                 # DOUBTFUL: the session is filling up
   contextHighAt: 0.9                 # SAD: compaction is imminent
   milestoneStreakDays: 5              # streak length that triggers a celebration
