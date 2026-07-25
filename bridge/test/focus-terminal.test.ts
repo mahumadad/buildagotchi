@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as childProcess from 'node:child_process';
-import { focusTerminal } from '../src/core/focus-terminal.js';
+import { focusTerminal, resetFocusCooldownForTests } from '../src/core/focus-terminal.js';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
@@ -10,6 +10,10 @@ const mockExecFile = vi.mocked(childProcess.execFile);
 
 describe('focusTerminal', () => {
   const originalPlatform = process.platform;
+
+  beforeEach(() => {
+    resetFocusCooldownForTests();
+  });
 
   afterEach(() => {
     vi.restoreAllMocks();
@@ -36,6 +40,14 @@ describe('focusTerminal', () => {
       expect.objectContaining({ timeout: 3000 }),
       expect.any(Function),
     );
+  });
+
+  it('skips a second call within the cooldown (no focus-stealing storm)', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    focusTerminal('/Users/dev/project');
+    focusTerminal('/Users/dev/project'); // immediately again — must be suppressed
+    focusTerminal('/Users/dev/project');
+    expect(mockExecFile).toHaveBeenCalledTimes(1);
   });
 
   it('logs the focused app on success', () => {
