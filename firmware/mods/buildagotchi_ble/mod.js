@@ -5,8 +5,16 @@
  */
 import { SimpleFace } from 'behaviors/face'
 import BLEServer from 'bleserver'
+import { Emoticon } from 'effects/emoticon'
 import { Behavior, Container, Content, Skin, Style, Text, Texture } from 'piu/MC'
 import Timer from 'timer'
+
+// D-17/stability: why the ESP32 last reset (Power-On, Panic, Task WDT, Brownout…).
+// Read lazily via a dynamic-ish require so a missing/unlinked `resetReason`
+// module can't crash the whole mod at import time (a static import of it left
+// the CoreS3 booting to a blank screen — the module built but wasn't in the
+// release host's runtime). Resolved once at boot, echoed in every hello.
+let RESET_REASON = 'unavailable'
 
 /**
  * Presets:
@@ -160,6 +168,48 @@ const DEVICE_NAME = 'buildagotchi'
 const NUS_CHUNK = 64
 /** Same window as default-mods petting (fwd+bwd swipe ⇒ pet). */
 const PET_WINDOW_MS = 800
+/**
+ * SAFETY: how long to ignore the touch panel after moving the head. A servo
+ * move (e.g. the pitch nod on a pending permission) jostles the capacitive
+ * Si12T — at high sensitivity that reads as a phantom press/release, which the
+ * bridge would take as a head-tap and auto-approve the very permission being
+ * shown. Suppressing touch until the head settles closes that servo↔touch loop.
+ *
+ * 1200ms was too short: measured 2026-07-24, phantom touch_head arrived
+ * ~2.6s post-servo (probably head reasenting after the pitch nod). 3500ms
+ * covers that with margin. Trade-off: a real tap in the first 3.5s after a
+ * head move is ignored — acceptable, since it's exactly the window when the
+ * user would naturally wait to see what changed.
+ */
+const TOUCH_SETTLE_MS = 3_500
+
+/**
+ * state.decorators (from the bridge stateRules) → firmware Emoticon key. The
+ * emulator renders every decorator; the firmware Emoticon effect only has these
+ * five keys. `thinking` and `question_mark` have no firmware emoticon yet, so
+ * they're dropped (would need their own effect) — the emulator still shows them.
+ */
+const DECORATOR_KEY_MAP = {
+  heart: 'heart',
+  sweat: 'sweat',
+  angry_mark: 'angry',
+  tear: 'tear',
+  sleepy_z: 'sleepy',
+}
+
+/**
+ * state.sound → a tone sequence, mirroring the emulator's sound-engine.js so the
+ * robot stops being mute. Each entry is [hz, durationMs, delayMs]. Played via
+ * `robot.tone()` (AudioOut); a no-op if the platform has no speaker configured.
+ */
+const SOUND_MAP = {
+  approve: [[523, 80, 0], [659, 80, 90], [784, 120, 180]],
+  deny: [[440, 100, 0], [330, 150, 110]],
+  permission: [[880, 60, 0], [1047, 60, 80], [880, 60, 160], [1047, 80, 240]],
+  notification: [[784, 80, 0], [1047, 120, 100]],
+  error: [[200, 80, 0], [200, 80, 120], [200, 80, 240]],
+  modeChange: [[440, 150, 0]],
+}
 
 const EMOTIONS = {
   NEUTRAL: 'NEUTRAL',
@@ -477,10 +527,20 @@ class BuildagotchiServer extends BLEServer {
     this.balloonArrow = null
     this.balloonMarqueeTimer = null
     this.faceDirty = true
-    // --- D-03 pulse smoke test (throwaway) ---
+    // D-03: handle for the breathing (pulse) LED timer, cleared on any other LED command.
     this.pulseTimer = null
-    this.pulseDemoActive = false
-    // --- end D-03 ---
+    // SAFETY: while true, touch is ignored — the head just moved (servo) and the
+    // panel readings are phantom. Set on every setPose, cleared after it settles.
+    this.touchSuppressed = false
+    this.touchSuppressTimer = null
+    // Current expression decorator (Emoticon), added/removed as state.decorators change.
+    this.decoratorEffect = null
+    this.decoratorKey = null
+    // Last sound played, so a re-emitted state doesn't replay the tone.
+    this.lastSound = null
+    // state.gaze ('left'|'right'|'center'|null) → pixel bias overlaid on top of
+    // the saccade modifier (see installGazeModifier). Read on every render tick.
+    this.gazeBias = 0
     /** Outbound event lines queued until CCCD notify is enabled. */
     this.pendingOut = []
   }
@@ -509,6 +569,7 @@ class BuildagotchiServer extends BLEServer {
         this.balloonBubble = null
         this.balloonArrow = null
         this.stopBalloonMarquee()
+        this.installGazeModifier() // fresh SimpleFace has fresh filters; re-add
         trace('[buildagotchi_ble] face remounted\n')
       }
     } catch (e) {
@@ -577,6 +638,7 @@ class BuildagotchiServer extends BLEServer {
           role: 'fw',
           fw_version: 'buildagotchi_ble-0.1',
           ts: Date.now(),
+          resetReason: RESET_REASON,
         })
         break
       case 'hb':
@@ -609,6 +671,9 @@ class BuildagotchiServer extends BLEServer {
       if (typeof state.emotion === 'string' && EMOTIONS[state.emotion]) {
         if (this.faceDirty && state.emotion !== 'SLEEPY') {
           this.remountFace()
+          // The remount drops all decorators, so the handle is stale; force re-add.
+          this.decoratorEffect = null
+          this.decoratorKey = null
         }
         robot.setEmotion(EMOTIONS[state.emotion])
         trace(`[buildagotchi_ble] emotion ${state.emotion}\n`)
@@ -618,6 +683,29 @@ class BuildagotchiServer extends BLEServer {
     }
 
     try {
+      this.applyDecorators(robot, state.decorators)
+    } catch (e) {
+      trace(`[buildagotchi_ble] applyDecorators error ${e}\n`)
+    }
+
+    try {
+      const snd = typeof state.sound === 'string' ? state.sound : null
+      if (snd && snd !== this.lastSound) this.playSound(robot, snd)
+      this.lastSound = snd
+    } catch (e) {
+      trace(`[buildagotchi_ble] playSound error ${e}\n`)
+    }
+
+    try {
+      // gaze bias in gazeX units (multiplied by 2 inside createEyePart). Radius=8,
+      // so ±5 shifts the pupil 10px — obvious ("stares to the side") without
+      // losing the pupil off the eye. Tuned up from 3 after first hardware test.
+      const g = state.gaze
+      this.gazeBias = g === 'left' ? -6 : g === 'right' ? 6 : 0
+      if (g) trace(`[buildagotchi_ble] gaze bias=${this.gazeBias} (${g})\n`)
+    } catch (_e) { /* ignore */ }
+
+    try {
       if (state.servo && typeof state.servo === 'object') {
         const yawDeg = Number(state.servo.yaw) || 0
         const pitchDeg = Number(state.servo.pitch) || 0
@@ -625,6 +713,7 @@ class BuildagotchiServer extends BLEServer {
         const p = (pitchDeg * Math.PI) / 180
         void robot.setTorque(true)
         void robot.setPose({ rotation: { y, p, r: 0 } }, 0.3)
+        this.suppressTouch()
       }
     } catch (e) {
       trace(`[buildagotchi_ble] servo error ${e}\n`)
@@ -757,55 +846,132 @@ class BuildagotchiServer extends BLEServer {
     )
   }
 
-  // --- D-03 pulse smoke test (throwaway) ---
-  // Head LED on CoreS3 is a PY32Led (12 RGB), driven by on()/#fill+refreshLeds()
-  // — NOT NeoStrand, so led-pulse.ts's setScheme path doesn't apply here. Manual
-  // breathing: vary brightness with a raised cosine (breath.ts curve) at 100ms.
-  // Guards applyLeds for ~21s so the bridge's LED commands don't stomp the demo.
-  startPulseDemo() {
-    const led = this.robot.led && this.robot.led.head
+  // D-03: breathing ("pulse") on the head LED. It's a PY32Led (12 RGB), driven by
+  // on()/#fill+refreshLeds() — NOT NeoStrand, so led-pulse.ts's setScheme path
+  // does not apply. We vary brightness with a raised cosine (breath.ts curve) at
+  // 100ms via a Timer; #stopPulse must run before any other LED command so the
+  // breathing doesn't fight blink/rainbow/solid. Verified on hardware 2026-07-23.
+  startPulse(robot, color) {
+    this.stopPulse()
+    const led = robot.led && robot.led.head
     if (!led) {
-      trace('[buildagotchi_ble] pulse demo: no head led\n')
+      robot.lightOn('head', color[0], color[1], color[2]) // fallback: solid
       return
     }
-    trace('[buildagotchi_ble] pulse demo: start (RED marker then breathe)\n')
-    this.pulseDemoActive = true
-    // Hardware sanity first: solid RED for 1s. If no red appears, the problem is
-    // the LED/getter — not the breathing curve. Also a visual "new build" marker.
-    this.robot.lightOn('head', 255, 0, 0)
     const dur = 2000
-    const rgb = [180, 40, 200] // magenta, distinct from the red marker
     let t = 0
-    if (this.pulseTimer != null) Timer.clear(this.pulseTimer)
-    // Start the breathing after the 1s red marker.
-    Timer.set(() => {
-      this.pulseTimer = Timer.repeat(() => {
-        const phase = (2 * Math.PI * (t % dur)) / dur
-        const k = (1 - Math.cos(phase)) / 2
-        led.on(Math.round(rgb[0] * k), Math.round(rgb[1] * k), Math.round(rgb[2] * k))
-        t += 100
-      }, 100)
-    }, 1000)
-    Timer.set(() => this.stopPulseDemo(), 21000)
+    this.pulseTimer = Timer.repeat(() => {
+      const phase = (2 * Math.PI * (t % dur)) / dur
+      const k = (1 - Math.cos(phase)) / 2
+      led.on(Math.round(color[0] * k), Math.round(color[1] * k), Math.round(color[2] * k))
+      t += 100
+    }, 100)
   }
 
-  stopPulseDemo() {
+  stopPulse() {
     if (this.pulseTimer != null) {
       Timer.clear(this.pulseTimer)
       this.pulseTimer = null
     }
-    this.pulseDemoActive = false
-    trace('[buildagotchi_ble] pulse demo: stop\n')
-    try {
-      this.robot.lightOff('head')
-    } catch (_e) {
-      /* ignore */
+  }
+
+  // Wire state.decorators to the firmware Emoticon effect (heart/sweat/angry/…).
+  // The buildagotchi mod calls setEmotion directly, bypassing the host's own
+  // emotion→emoticon effect, so without this the robot shows no decorators even
+  // though the emulator does. One emoticon at a time (mirrors the host default-mod).
+  applyDecorators(robot, decorators) {
+    const list = Array.isArray(decorators) ? decorators : []
+    let key = null
+    for (const d of list) {
+      if (DECORATOR_KEY_MAP[d]) {
+        key = DECORATOR_KEY_MAP[d]
+        break
+      }
+    }
+    if (key === this.decoratorKey) return // unchanged
+    if (this.decoratorEffect != null) {
+      robot.renderer?.removeDecorator(this.decoratorEffect)
+      this.decoratorEffect = null
+    }
+    this.decoratorKey = key
+    if (key != null) {
+      try {
+        this.decoratorEffect = new Emoticon({ key, name: 'decorator' })
+        robot.renderer?.addDecorator(this.decoratorEffect)
+        trace(`[buildagotchi_ble] decorator ${key}\n`)
+      } catch (e) {
+        trace(`[buildagotchi_ble] decorator error ${e}\n`)
+        this.decoratorEffect = null
+        this.decoratorKey = null
+      }
     }
   }
-  // --- end D-03 ---
+
+  // Wire state.gaze to a bias overlaid on the SimpleFace eyes AFTER the saccade
+  // modifier runs, so the pupils drift toward left/right/center instead of only
+  // doing the idle random saccade. The face model already has gazeX/gazeY on
+  // each eye (eye radius 8, offset ×2 → gazeX ±3 gives a visible pupil shift).
+  // Runs on the renderer.filters array (public, mutable) — no upstream fork.
+  installGazeModifier() {
+    try {
+      const renderer = this.robot.renderer
+      const filters = renderer?.filters
+      if (!Array.isArray(filters)) return
+      // Idempotent: don't stack copies if remountFace re-runs before we clear.
+      const marker = '__buildagotchi_gaze__'
+      for (let i = filters.length - 1; i >= 0; i--) {
+        if (filters[i] && filters[i][marker]) filters.splice(i, 1)
+      }
+      const self = this
+      const modifier = (_tick, face) => {
+        const bias = self.gazeBias
+        if (bias !== 0) {
+          if (face.eyes.left) face.eyes.left.gazeX = bias
+          if (face.eyes.right) face.eyes.right.gazeX = bias
+        }
+        return face
+      }
+      modifier[marker] = true
+      filters.push(modifier) // runs AFTER saccade → overrides it when bias≠0
+      trace(`[buildagotchi_ble] gaze modifier installed (filters=${filters.length})\n`)
+    } catch (e) {
+      trace(`[buildagotchi_ble] installGazeModifier error ${e}\n`)
+    }
+  }
+
+  // Play a state.sound tone sequence via robot.tone() (no-op without a speaker).
+  playSound(robot, name) {
+    const seq = SOUND_MAP[name]
+    if (!seq) return
+    for (const step of seq) {
+      const hz = step[0]
+      const dur = step[1]
+      const delay = step[2]
+      const beep = () => {
+        try {
+          void robot.tone(hz, dur)
+        } catch (_e) {
+          /* no speaker / busy */
+        }
+      }
+      if (delay > 0) Timer.set(beep, delay)
+      else beep()
+    }
+  }
+
+  // SAFETY: ignore the touch panel until the head settles after a servo move.
+  suppressTouch() {
+    this.touchSuppressed = true
+    if (this.touchSuppressTimer != null) Timer.clear(this.touchSuppressTimer)
+    this.touchSuppressTimer = Timer.set(() => {
+      this.touchSuppressed = false
+      this.touchSuppressTimer = null
+    }, TOUCH_SETTLE_MS)
+  }
 
   applyLeds(robot, leds) {
-    if (this.pulseDemoActive) return // D-03 throwaway: keep the demo uninterrupted
+    // Any new LED command supersedes a running breath (D-03).
+    this.stopPulse()
     if (leds.length === 0) {
       robot.lightOff('head')
       return
@@ -819,6 +985,8 @@ class BuildagotchiServer extends BLEServer {
         robot.lightBlink('head', color[0], color[1], color[2], 250)
       } else if (pattern === 'rainbow') {
         robot.lightRainbow('head')
+      } else if (pattern === 'pulse') {
+        this.startPulse(robot, color)
       } else {
         robot.lightOn('head', color[0], color[1], color[2])
       }
@@ -842,6 +1010,21 @@ class BuildagotchiServer extends BLEServer {
     this.safeTimer = Timer.set(() => {
       this.safeTimer = null
       this.enterSafeMode('heartbeat')
+      // Stability (bug #2): 15s with no inbound (the bridge sends a heartbeat
+      // every 5s) means the central dropped the link ungracefully — the device
+      // never got onDisconnected, so it holds a ghost connection and never
+      // re-advertises. The bridge then scans and finds NO device for minutes
+      // (verified: "No BLE device matching prefix buildagotchi"). If we still
+      // think we're connected (tx set), force our own disconnect: onDisconnected
+      // re-advertises and the bridge reconnects in seconds, not minutes.
+      if (this.tx != null) {
+        try {
+          this.disconnect()
+          trace('[buildagotchi_ble] heartbeat lost — forced disconnect to re-advertise\n')
+        } catch (e) {
+          trace(`[buildagotchi_ble] force disconnect error ${e}\n`)
+        }
+      }
     }, SAFE_MODE_MS)
   }
 
@@ -875,6 +1058,21 @@ class BuildagotchiServer extends BLEServer {
   }
 
   emitTouch(gesture) {
+    // Circuit breaker: a phantom-touch storm at the sensitivity threshold can
+    // emit events fast enough to exhaust the XS fixed heap (observed: a touch
+    // flood → "Chunk allocation failed" → rst:0xc software reset). Cap the
+    // sustained emit rate — 20 events / 5s. A real user tapping never
+    // approaches this, so normal use (incl. the double-tap) is unaffected.
+    const now = Date.now()
+    if (now - (this.touchWindowStart || 0) > 5000) {
+      this.touchWindowStart = now
+      this.touchWindowCount = 0
+    }
+    this.touchWindowCount = (this.touchWindowCount || 0) + 1
+    if (this.touchWindowCount > 20) {
+      if (this.touchWindowCount === 21) trace('[buildagotchi_ble] touch storm — dropping events\n')
+      return
+    }
     this.send('event', { kind: 'touch', detail: { gesture } })
   }
 
@@ -892,62 +1090,67 @@ function setupTouch(server, robot) {
   let lastFwd = null
   let lastBwd = null
   try {
-    // More sensitive than defaults — kit was stuck at [0,0,0] with level 3.
-    panel.configure({ sensitivityType: 1, sensitivityLevel: 0 })
-    trace('[buildagotchi_ble] touch sensitivity high/0\n')
+    // Si12T sensitivity. Level 3 (the driver default) read a flat [0,0,0] on
+    // this kit — nothing registered. Level 0 (max) went too far the other way:
+    // measured 2026-07-24, it free-runs at [3,3,3] (all three zones saturated)
+    // for tens of seconds with nobody near the robot, ~15 phantom readings per
+    // minute, which the panel turns into ~1 phantom tap/min. At that setting a
+    // real finger and idle drift produce the identical value, so no amount of
+    // bridge-side filtering can tell them apart. Level 1 is the next step down
+    // in sensitivity — re-measure with GET /debug/touch-samples after changing.
+    panel.configure({ sensitivityType: 1, sensitivityLevel: 1 })
+    trace('[buildagotchi_ble] touch sensitivity high/1\n')
   } catch (e) {
     trace(`[buildagotchi_ble] touch configure error ${e}\n`)
   }
-  let sawNonZero = false
-  let lastSampleEmit = 0
+  // --- Own touch detection (D-17 debounce) --------------------------------
+  // The firmware TouchPanel runs its own GestureRecognizer and hands us
+  // press/release/swipe via onGesture. On this Si12T that recognizer chatters:
+  // a single deliberate finger press produced a forwardSwipe plus stray
+  // release/press pairs (measured 2026-07-24). A stray press with no matching
+  // release then sat "pressed" until the 2s hold fired and put the robot to
+  // SLEEP mid-demo; the moving centroid turned taps into phantom swipes.
+  //
+  // So we ignore onGesture entirely and derive press/release ourselves from the
+  // raw onSample stream, with two guards: `touched` requires a zone at or above
+  // TOUCH_ON, and releasing requires TOUCH_OFF_SAMPLES consecutive empty reads
+  // (~150ms) so a momentary [0,0,0] glitch in the middle of a hold doesn't emit
+  // a false release. No direction / centroid is considered, so a touch never
+  // becomes a swipe. `emitTouch('press'|'release')` feeds the bridge's own
+  // tap/hold recogniser exactly as before.
+  const TOUCH_ON = 2 // any zone >= this is contact; 2 (not 1) rejects the near-
+  // threshold noise flapping that flooded touch events and exhausted the heap
+  const TOUCH_OFF_SAMPLES = 3 // consecutive empty reads before we trust a release
+  let touched = false
+  let emptyRun = 0
   panel.onSample = (sample, ticks) => {
-    let active = false
-    for (let i = 0; i < sample.length; i++) {
-      if (sample[i] > 0) {
-        active = true
-        break
+    if (server.touchSuppressed) return // SAFETY: head moving → phantom readings
+    const peak = Math.max(sample[0] || 0, sample[1] || 0, sample[2] || 0)
+    const contact = peak >= TOUCH_ON
+
+    if (contact) {
+      emptyRun = 0
+      if (!touched) {
+        touched = true
+        trace('[buildagotchi_ble] touch press\n')
+        server.emitTouch('press')
+      }
+    } else if (touched) {
+      emptyRun++
+      if (emptyRun >= TOUCH_OFF_SAMPLES) {
+        touched = false
+        emptyRun = 0
+        trace('[buildagotchi_ble] touch release\n')
+        server.emitTouch('release')
       }
     }
-    if (!active) return
-    if (!sawNonZero) {
-      sawNonZero = true
-      trace(`[buildagotchi_ble] touch FIRST non-zero ${JSON.stringify(sample)}\n`)
-    }
-    // Throttled zone dump for head-touch tests: [front, middle, back] 0..3
-    const t = typeof ticks === 'number' ? ticks : 0
-    if (t - lastSampleEmit < 200) return
-    lastSampleEmit = t
-    trace(`[buildagotchi_ble] zones ${JSON.stringify(sample)}\n`)
-    server.send('event', {
-      kind: 'touch',
-      detail: {
-        gesture: 'sample',
-        zones: [sample[0] || 0, sample[1] || 0, sample[2] || 0],
-      },
-    })
   }
-  panel.onGesture = (gesture) => {
-    const type = gesture.type
-    if (typeof type !== 'string') return
-    trace(`[buildagotchi_ble] gesture ${type}\n`)
-    server.emitTouch(type)
-    // --- D-03 pulse smoke test (throwaway): a backward swipe kicks the demo ---
-    if (type === 'backwardSwipe') server.startPulseDemo()
-    // --- end D-03 ---
-    if (type === 'forwardSwipe') lastFwd = gesture.ticks
-    else if (type === 'backwardSwipe') lastBwd = gesture.ticks
-    if (
-      lastFwd != null &&
-      lastBwd != null &&
-      Math.abs(lastFwd - lastBwd) <= PET_WINDOW_MS
-    ) {
-      trace('[buildagotchi_ble] gesture pet\n')
-      server.emitTouch('pet')
-      lastFwd = null
-      lastBwd = null
-    }
-  }
-  trace('[buildagotchi_ble] touchPanel hooked\n')
+  // onGesture left unset: the firmware recognizer's swipe/press/release are the
+  // chatter source; we do not consume them. `lastFwd`/`lastBwd` (pet detection)
+  // are unused for now — head_pet can be revisited once a clean swipe exists.
+  void lastFwd
+  void lastBwd
+  trace('[buildagotchi_ble] touchPanel hooked (own debounce)\n')
 }
 
 function setupButtons(server, robot) {
@@ -982,12 +1185,60 @@ export function onRobotCreated(robot) {
   trace('[buildagotchi_ble] start\n')
   try {
     const server = new BuildagotchiServer(robot)
+    server.installGazeModifier() // hook into the initial face's filters
     setupTouch(server, robot)
     setupButtons(server, robot)
-    // --- D-03 pulse smoke test (throwaway): auto-fire once ~2.5s after boot so
-    // we don't depend on the swipe gesture. RED marker confirms the new build. ---
-    Timer.set(() => server.startPulseDemo(), 2500)
-    // --- end D-03 ---
+    // Rest pose: the host boots the neck at its pitch home (angle 0), which
+    // leaves the head drooping down — it hides the face and blocks the reset
+    // button. Lift it at startup. The pitch axis runs 0..90° in one direction
+    // and maps as servoAngle = -p, so a negative p tilts the head up;
+    // ~-0.45 rad ≈ 26° (level-ish, tuned by eye).
+    try {
+      robot.setTorque(true)
+      robot.setPose({ rotation: { y: 0, p: -0.45, r: 0 } }, 0.4)
+    } catch (e) {
+      trace(`[buildagotchi_ble] rest pose error ${e}\n`)
+    }
+    // Stability: these servos never answer a position READ, so robot.updatePose()
+    // burns two 40ms serial timeouts on every render tick — a permanent storm of
+    // "timeout." from scservo.ts, hammering the UART the whole time the robot is
+    // up. The reads never succeed anyway (the pose just keeps its last value), so
+    // failing fast is behaviourally identical and frees the bus and the tick.
+    try {
+      const driver = robot.driver
+      if (driver && typeof driver.getRotation === 'function') {
+        // Plain assignment throws "not writable": the method lives on the
+        // driver's prototype and XS makes it read-only, and an assignment
+        // consults the inherited descriptor. defineProperty installs an own
+        // property on the instance without consulting it.
+        Object.defineProperty(driver, 'getRotation', {
+          value: () => Promise.resolve({ success: false }),
+          writable: true,
+          configurable: true,
+        })
+        trace('[buildagotchi_ble] servo position polling disabled\n')
+      }
+    } catch (e) {
+      trace(`[buildagotchi_ble] driver patch error ${e}\n`)
+    }
+    // Stability: the host joins Wi-Fi at boot and, on any drop, keeps
+    // reconnecting in the background forever (network-service.ts:62). The buddy
+    // talks over BLE only, and Wi-Fi + BLE share the ESP32-S3's single 2.4GHz
+    // radio, so that idle Wi-Fi activity contends with the link. Shut it down.
+    // globalEnv IS globalThis (main.ts), so the live NetworkService is reachable
+    // as globalThis.network with no new import (a top-level import that the host
+    // can't resolve is the false-brick failure mode — avoid it).
+    try {
+      const net = globalThis.network
+      if (net && typeof net.close === 'function') {
+        net.close()
+        trace('[buildagotchi_ble] wifi shut down\n')
+      } else {
+        trace('[buildagotchi_ble] no globalThis.network to close\n')
+      }
+    } catch (e) {
+      trace(`[buildagotchi_ble] wifi shutdown error ${e}\n`)
+    }
   } catch (e) {
     trace(`[buildagotchi_ble] BLE error ${e}\n`)
   }
