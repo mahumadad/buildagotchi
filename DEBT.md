@@ -430,3 +430,99 @@ Se dejan acá con la fecha para no re-descubrirlas.
   Lo que sigue sin cubrir es el WebGL: que el canvas conserve su tamaño tras un
   ciclo de vistas solo lo prueba un navegador de verdad. Eso es Playwright, y es
   otra decisión. `tsconfig.test.json` ganó `lib: ["ES2023","DOM"]` y `allowJs`.
+
+---
+
+## D-19 — zumbido de servo por torque continuo
+
+**Dónde**: `firmware/mods/buildagotchi_ble/mod.js`, la pose de reposo en
+`onRobotCreated` (`setTorque(true)` + `setPose({p:-0.45})`). `setTorque` solo se
+llama en `true` (ahí y en el path de gestos, ~línea 714), **nunca** en `false`.
+
+**Por qué no explotó**: es un "pitido ínfimo" — solo se nota en una habitación en
+silencio. Antes de la pose de reposo, en el arranque el torque estaba apagado (servo
+mudo, pero la cabeza caída tapando la cara y el botón de reset).
+
+**Qué la haría explotar**: molesta de noche / en silencio; y el servo consume
+corriente permanentemente sosteniendo la posición.
+
+**Costo**: bajo, pero con incógnita de hardware. Fix a probar: poner la pose y
+**soltar el torque** (`Timer.set(()=>robot.setTorque(false), ~800)`). Los scservo
+tienen mucha reducción y **podrían** sostener la cabeza sin torque (no backdrive por
+gravedad). Si aguanta → gana-gana (arriba + silencio); si se cae → trade-off
+(cabeza-arriba+zumbido vs cabeza-abajo+silencio), elige el usuario. Aplica también al
+path de gestos, que deja torque on tras cada nod.
+
+## D-20 — `focusTerminal` levanta la app equivocada (mitigado, no resuelto)
+
+**Dónde**: `bridge/src/core/focus-terminal.ts`. El osascript activa la **primera app
+corriendo** de `Code/Cursor/Windsurf/Warp/iTerm2/Terminal` — **ignora el cwd**. Para un
+usuario que trabaja en la app de escritorio de Claude, levanta VS Code, que no tiene
+nada que ver.
+
+**Por qué no explotó (del todo)**: el cooldown de 8s (D34) cortó el storm de 727×/min
+que hacía imposible escribir. Pero cuando dispara, sigue trayendo la ventana equivocada.
+
+**Qué la haría explotar**: cualquier permiso/pregunta resuelto trae VS Code al frente
+aunque el usuario esté en otra app.
+
+**Costo**: bajo. Gatearlo o desactivarlo por config (`focusOnResolve: false`), o hacer
+que respete de verdad el cwd (matchear la ventana del proyecto).
+
+## D-21 — "avisar cerca de los límites de uso" está bloqueado por los hooks
+
+**Dónde**: no hay código — es un gap de datos. Los límites de uso 5h/semanal
+(`rate_limits.five_hour/seven_day.used_percentage`) solo llegan en el JSON de la
+**statusline**, no en ningún hook. El bridge se alimenta de hooks.
+
+**Por qué no explotó**: es una feature pedida, no un bug.
+
+**Qué la haría explotar**: el usuario quiere que el buddy le avise cuando se acerca a su
+límite de uso — hoy imposible sin un canal nuevo.
+
+**Costo**: medio. Requeriría que algo con acceso al JSON de la statusline (un script CLI,
+inviable para un usuario app-only) empuje los `rate_limits` al bridge por `POST /events`,
+con throttle. A diseñar.
+
+## D-22 — el balloon del firmware no muestra emoji (sale "??")
+
+**Dónde**: la fuente del balloon es `OpenSans-Regular-16` (bitmap, ASCII básico —
+manifest del mod). Cualquier emoji o carácter fuera de ASCII en el texto del balloon
+sale como `??`. En `config.yaml`, `life_milestone` usa `"🎉 {streak} días seguidos"`
+→ en hardware saldría `"?? días seguidos"`. Verificado en HW 2026-07-25 (un globo de
+prueba con 🌈 salió `??`).
+
+**Por qué no explotó**: `life_milestone` (racha de días de uso) casi no se dispara aún;
+el resto de los balloons son ASCII.
+
+**Qué la haría explotar**: cualquier balloon con emoji/acentos en hardware real.
+
+**Costo**: bajo si se acepta la limitación — usar solo ASCII en los templates de
+balloon (los "emoticons" reales del buddy son los **decorators**, que son gráficos y sí
+funcionan: heart, angry_mark, sweat, etc.). Alto si se quiere emoji de verdad: haría
+falta una fuente con esos glifos (peso en flash del ESP32). Nota aparte: `rainbow` es
+capacidad real del firmware (`lightRainbow`) pero **ninguna stateRule lo usa** — solo se
+vio en la demo con una regla temporal.
+
+---
+
+## Resueltas en la maratón de estabilidad (2026-07-25)
+
+- ~~**Tormenta de `timeout.` del bus servo**~~ (estaba en Pendientes del DEVLOG) —
+  `getRotation` poleaba los servos en cada frame de render y ninguno respondía → 80ms
+  muertos/frame + UART saturado. Deshabilitado el poleo (`Object.defineProperty` porque
+  el método del driver es read-only). timeouts 127/30s → 0.
+
+- ~~**Reinicios espontáneos del CoreS3**~~ — eran OOM de la VM XS
+  (`Chunk allocation failed → rst:0xc`), disparados por una tormenta de eventos táctiles
+  + un evento `sample` de diagnóstico cada 150ms. Cerrado: quitado el `sample`,
+  `TOUCH_ON` 1→2, circuit breaker en `emitTouch`.
+
+- ~~**Reconexión BLE de minutos**~~ — conexión fantasma del firmware tras un corte sucio
+  del Mac (D32). Cerrado: force-disconnect en el safe-mode de heartbeat.
+
+- ~~**Falso 100% de contexto**~~ — ventana cableada en 200k vs 1M real (D31). Cerrado:
+  ventana → 1M.
+
+- ~~**Robo de foco (teclado)**~~ — `focusTerminal` sin cooldown (D34). Cerrado con el
+  cooldown; queda D-20 (app equivocada).

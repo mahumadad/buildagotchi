@@ -923,6 +923,107 @@ UPLOAD_PORT=/dev/cu.usbmodem101
 
 ---
 
+## 2026-07-23 — El hardware llegó: mod al slot por esptool; wiring cerrado
+
+- Llegó el CoreS3. El mod `buildagotchi_ble` **no** se instala por `mcrun` a secas
+  (el host release rechaza mod-install por debugger). Vía que funciona: **esptool
+  directo al slot** (`xs`, subtype 0x40, offset `0xfa0000`), sobre release, sin
+  xsbug. Build con `mcrun -m -p esp32:./platforms/m5stackchan_cores3` — target
+  correcto; el default `esp32/m5stack` nunca instala. Pipeline completo en la memoria
+  de flasheo.
+- Cerrados **por wiring** (el firmware ya tenía la capacidad; el mod no la cableaba):
+  `decorators` (`Emoticon`), `sound` (`robot.tone`), `gaze` (±px), y **pulse (D-03)**
+  — todos verificados en hardware. Cierra la deuda del mapa simulador↔firmware.
+- Si12T (táctil de 3 zonas): `sensitivityLevel:1` (el nivel 0 satura ruido). Detección
+  de touch **propia** con debounce en el mod: el `GestureRecognizer` del firmware
+  confunde un toque con swipe. `hold→SLEEP` deshabilitado (el drift capacitivo lo
+  disparaba solo).
+
+## 2026-07-24 — Gate 1 real + estabilización del bridge
+
+- **Gate 1 LOGRADO**: un doble-tap físico en la cabeza aprueba un permiso real de
+  Claude (`resolved src=head reason=approved`). Cadena: `sensitivityLevel:1` +
+  debounce propio + `tapMs` 900 (los taps reales duran 180-800ms, no 300) + doble-tap
+  universal (dos fantasmas en <700ms ~imposible).
+- Bug "auto-aprobaba sin tocar": el Si12T a nivel 0 saturaba `[3,3,3]`, ruido
+  indistinguible de un dedo (~15 lecturas fantasma/min). Los fixes de arriba lo
+  cerraron.
+- Bridge robusto ante caídas BLE: `try/catch` en `start()`/`#attemptReconnect`; fuga
+  de listeners `discover` de noble corregida (`removeListener` en todo exit path).
+  **Inferencia de reboots** bridge-side (`link down {uptimeMs, sendInFlight}` en
+  `#onLinkDead` + salto hacia atrás del reloj del `hello`).
+- **Falso-brick**: un `import` de un módulo que el host release no precarga
+  (ej. `resetReason`) compila pero crashea al *ejecutarse* → pantalla gris, sin BLE.
+  Recuperable: quitar el import, rebuild, reflash. Regla: los imports del mod deben
+  ser módulos que el host precarga de verdad.
+
+## 2026-07-25 — Maratón de estabilidad: 3 bugs + foco + calibración
+
+Sesión larga de systematic-debugging. La **consola serial fue la herramienta clave**:
+imprime el `rst:` del ROM gratis, justo el dato que creímos que exigía recompilar el
+host.
+
+**Bug 1 — reinicios espontáneos = agotamiento de RAM (OOM).** El vigía serial cazó
+`# Chunk allocation: 456 bytes failed in fixed size heap` → `rst:0xc (RTC_SW_CPU_RST)`
+— reset por **software**, no brownout (`BROWN_OUT_RST`) ni watchdog (`TGxWDT`).
+Disparador: una tormenta de eventos táctiles (el Si12T flapeando en el umbral) + un
+evento `sample` de diagnóstico alocando JSON cada 150ms, mientras se renderizaba un
+globo. Fix (defensa en profundidad): quitar el `sample`, `TOUCH_ON` 1→2, circuit
+breaker en `emitTouch` (máx 20/5s). Cero crashes desde el flash. De paso: se quitó la
+**tormenta de timeouts del servo** (`getRotation` poleaba en cada frame → 80ms muertos/
+frame; deshabilitado con `Object.defineProperty` porque el método es read-only) y el
+**Wi-Fi** que competía por la radio 2.4GHz (apagado con `globalThis.network.close()`;
+matiz: el host ya conectó en el boot antes de que corra el mod).
+
+**Bug 2 — reconexión BLE lenta con el device VIVO.** El log del bridge lo confirmó:
+durante el apagón repetía `No BLE device matching prefix "buildagotchi" within 15000ms`
+— noble escanea y no encuentra nada = **el device no se anuncia**. Advertising
+descartado (es fast, 30-60ms `ADV_FAST_INTERVAL1`). Causa: el Mac corta el enlace
+sucio, el firmware nunca recibe `onDisconnected`, cree que sigue conectado, no
+re-anuncia. Fix: el mod ya detecta el silencio (safe-mode heartbeat a los
+`SAFE_MODE_MS=15s`); ahora además, si sigue "conectado" (`tx != null`), fuerza su
+propia `BLEServer.disconnect()` → onDisconnected → re-anuncia → reconexión en segundos.
+
+**Bug 3 — falso 100% de contexto.** El robot mostraba SAD+gotas "va a compactar" al
+iniciar sin ser cierto. Evidencia del `/events`: TRES proyectos distintos todos en
+`pct:100`. Causa: `contextWindowTokens` cableado en 200k, pero la familia Claude actual
+es 1M — toda sesión >200k se topaba en 100%. Fix: ventana → 1M (verificado contra un
+transcript real de ~999k sin compactar). El cálculo del transcript era correcto (último
+`usage`, no suma). Los hooks no traen el % real (solo la statusline). Default del repo
+en `config.example.yaml` también subido a 1M.
+
+**Robo de foco.** `focusTerminal` disparó 727× a ~1/s (toques + una pregunta pendiente
+→ `#focusPendingQuestion`), levantando VS Code y haciendo imposible escribir en otra
+ventana. Además `focusTerminal` ni respeta el cwd (activa la 1ª app de la lista). Fix:
+cooldown de 8s (test nuevo; suite 665 verde).
+
+**Preguntas recuperadas.** Faltaba el hook `PreToolUse` en `~/.claude/settings.json`.
+La feature de mostrar `AskUserQuestion` con sus opciones **ya estaba construida**
+(adapter `PreToolUse` → categoría `question`; regla en config: DOUBTFUL + `question_mark`
++ ámbar + globo), solo apagada. Agregado el hook → verificado end-to-end.
+
+**Pose de reposo.** El host arranca el cuello caído (tapa la cara y el botón de reset).
+Pose al boot en `onRobotCreated` (`p:-0.45 ≈ 26°`, calibrado a ojo). Deja un zumbido de
+servo por torque continuo → **DEBT D-19**.
+
+**Statusline (descartada como superficie).** Se intentó agregar tokens/contexto/límites
+a la statusline, pero el `statusLine` custom es solo CLI: la app de escritorio dibuja la
+suya y no invoca el script. Revertido. Los límites de uso (`rate_limits`) solo están en
+el JSON de la statusline, inaccesibles desde hooks → "avisar cerca de los límites" queda
+bloqueado (backlog).
+
+**Repo:** todo commiteado y **pusheado** (bridge + firmware). Se mató la regla fantasma
+"nunca commitear `mod.js`" — sí se versiona (`5b1ad32`), esperando a que esté estable.
+
+**Dirección de producto (diseñada, sin construir):** el buddy hoy es espejo + enrutador
+de atención, no control remoto. Loop operativo diseñado: convocar con escalada, mostrar
+cuál sesión espera, tap→terminal correcto, y **permisos con sí/no real vía un hook
+`PreToolUse` que consulta al bridge** (allow/deny, ventana ~10s, fallback al teclado).
+AskUserQuestion NO es respondible desde el robot (sin canal en hooks/SDK) — backlog:
+reframe como permisos, o responder por voz.
+
+---
+
 ## Pendientes inmediatos
 
 - [x] Push a GitHub (1B + balloon + remount)
@@ -932,10 +1033,11 @@ UPLOAD_PORT=/dev/cu.usbmodem101
       interactiva.
 - [x] Fase 0: kit validado (NOTES.md)
 - [x] Fase 1B: BLE real con noble + CoreS3 (OK visual 2026-07-22)
-- [ ] Gate 1: 3 semanas de uso real del MVP (criterios en ROADMAP.md)
+- [~] Gate 1: el doble-tap aprueba un permiso real (verificado en HW 2026-07-24).
+      Falta el criterio de "3 semanas de uso real del MVP" (ROADMAP.md).
 - [x] Balloon en firmware (`ResolvedState.balloon` → `showBalloon`, OK visual)
-- [ ] Touch BLE → bridge (gestos cabeza)
-- [ ] Bus servo: rain of `timeout.` (cara/UI puede degradarse)
+- [x] Touch BLE → bridge (gestos cabeza) — debounce propio del mod; Gate 1 (2026-07-24)
+- [x] Bus servo: rain of `timeout.` — poleo de `getRotation` deshabilitado (2026-07-25)
 
 [DEBT.md](DEBT.md) queda con varias entradas abiertas: D-03 (decisión pendiente
 sobre `pulse`), D-10 (medición de latencia del firmware), D-12 (trust-check), D-13

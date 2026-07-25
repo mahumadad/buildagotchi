@@ -8,9 +8,12 @@ bite-sized (TDD, pasos de 2-5 min) se escribe *just-in-time* al arrancar cada fa
 
 Decisiones ancladas en [DECISIONS.md](DECISIONS.md).
 
-Estado: **Fase 0 pendiente de arrancar.** La Fase 1A (bridge en modo simulación,
-sin hardware — ver [SPEC-FASE-1.md](SPEC-FASE-1.md)) puede arrancar en paralelo
-mientras el kit llega, gracias a D11.
+Estado (2026-07-25): **hardware real funcionando.** El CoreS3 llegó (~2026-07-23),
+el mod se instala por esptool→slot, y **Gate 1 está logrado técnicamente** — un
+doble-tap físico aprueba un permiso real de Claude (verificado en HW 2026-07-24).
+Falta el criterio de gate: **3 semanas de uso real** del MVP antes de Fase 3.
+Estabilidad endurecida en la maratón del 2026-07-25 (OOM, reconexión BLE, foco,
+contexto — ver DEVLOG/DEBT). Fases 0/1A/1B cerradas.
 
 ---
 

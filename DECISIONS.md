@@ -3,7 +3,7 @@
 Registro de decisiones arquitectónicas del proyecto. Actualizar cuando una decisión
 cambie; no borrar las rechazadas (evita re-litigar).
 
-Última actualización: 2026-07-06 (council: D19 reescrito, D21 ajustado, A1 cerrada)
+Última actualización: 2026-07-25 (D31-D35: hardware real, estabilidad, contexto 1M, foco)
 
 ---
 
@@ -960,6 +960,50 @@ misma forma a nivel de tipos.
 `rainbow`. **`pulse` no existe** (lo tenía el emulador). El enum de zod se
 restringe a `solid | blink | rainbow | off`. Escribir config contra una
 capacidad que el hardware no tiene es fabricarse una migración.
+
+---
+
+## Decisiones de hardware real y estabilidad (2026-07-23/25)
+
+- **D31 — Ventana de contexto = 1M, no 200k.** La familia Claude actual (Opus 4.x,
+  Sonnet 5) es de 1M de contexto. La suposición cableada de 200k hacía que toda sesión
+  por encima del ~20% de su ventana real reportara un falso "100% — va a compactar"
+  (SAD + gotas) al reconectar el robot. Verificado contra un transcript real que llegó a
+  ~999k tokens sin compactar. Los hooks **no** exponen el % real de contexto (solo la
+  statusline, vía `context_window.used_percentage`, inaccesible desde hooks); el bridge
+  lo estima del último `usage` del transcript sobre la ventana **declarada**
+  (`claude.contextWindowTokens`). Por eso la ventana hay que declararla bien.
+
+- **D32 — Recuperación de BLE lento: desde el firmware, no el bridge.** El apagón de
+  minutos (con el device vivo) era el firmware sosteniendo una **conexión fantasma**
+  tras un corte sucio del Mac: nunca recibe `onDisconnected`, así que no re-anuncia y el
+  bridge escanea y no encuentra nada. El bridge no puede forzar el re-anuncio de forma
+  remota. El mod, que ya detecta silencio de heartbeat (`SAFE_MODE_MS=15s`; el bridge
+  manda `hb` cada 5s), fuerza su propia `BLEServer.disconnect()`. Es higiene de enlace
+  correcta pase lo que pase (un enlace sin latido 15s debe cerrarse).
+
+- **D33 — Reset reason: por consola serial, no por rebuild del host.** Leer el motivo de
+  reset con el módulo `resetReason` de la SDK exige una función nativa C
+  (`xs_esp32_reset_reason`) que el host no compila. Un mod es **JS puro** cargado en
+  runtime: no puede inyectar código nativo, y agregarlo al `manifest.json` del mod
+  tampoco sirve (el símbolo sigue sin existir en el host). Pero el bootloader ROM imprime
+  `rst:0xNN` gratis por serial. Decisión: **no** recompilar el host; usar la consola
+  serial + la inferencia bridge-side (`link down {uptimeMs, sendInFlight}`).
+
+- **D34 — `focusTerminal` con cooldown; para app-only es puro daño.** Traer una ventana
+  al frente es intrínsecamente disruptivo; ningún caller debe poder hacerlo más de una
+  vez cada 8s (un storm de toques + pregunta pendiente lo disparó 727× a ~1/s, robando
+  el teclado). Además `focusTerminal` activa la primera app de la lista
+  (`Code/Cursor/...`), **no** respeta el cwd: para un usuario que vive en la app de
+  escritorio no sirve para nada y solo estorba. Futuro: gatearlo o desactivarlo por
+  config.
+
+- **D35 — El firmware `mod.js` SÍ se versiona.** No existía una regla de "nunca commitear
+  el firmware"; fue una convención errada que se arrastró una sesión. Se commitea (con
+  autorización explícita, como todo) **cuando está estable**; durante la calibración en
+  hardware cambia en cada flash, así que conviene esperar antes de capturar intermedios.
+  Ojo con las dos copias (`firmware/mods/...` git source y `stack-chan/firmware/mods/...`
+  copia de flasheo) que hay que sincronizar antes de flashear.
 
 ---
 
