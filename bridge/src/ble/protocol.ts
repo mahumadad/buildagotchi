@@ -123,6 +123,15 @@ export class ProtocolSession {
   #reconnectStartedAt = 0;
   #reconnectTimer: NodeJS.Timeout | null = null;
 
+  // Stability inference (no firmware support needed). A spontaneous CoreS3
+  // reboot cannot be read from the mod (the reset-reason API needs a native
+  // symbol the release host was never compiled with). Instead we characterise
+  // reboots from the link's own lifecycle: how long the device stayed up before
+  // it dropped, and whether the firmware clock jumped backwards on the next
+  // hello (which only a reboot does).
+  #lastLinkUpAt = 0;
+  #lastHelloTs = 0;
+
   constructor(transport: Transport, cfg: BleConfig, deps: ProtocolSessionDeps) {
     this.#transport = transport;
     this.#cfg = cfg;
@@ -175,6 +184,7 @@ export class ProtocolSession {
   #setLinkHealthy(healthy: boolean): void {
     if (this.#linkHealthy === healthy) return;
     this.#linkHealthy = healthy;
+    if (healthy) this.#lastLinkUpAt = this.#now();
     this.#deps.onLinkChange(healthy);
   }
 
@@ -248,8 +258,21 @@ export class ProtocolSession {
     if (!this.#awaitingHello) return; // unsolicited hello: no send timestamp to pair it with
     const recvTs = this.#now();
     const rtt = recvTs - this.#awaitingHello.sentAt;
-    const fwTs = (envelope.p as { ts: number }).ts;
+    const p = envelope.p as { ts: number };
+    const fwTs = p.ts;
     this.#clockOffset = fwTs - this.#awaitingHello.sentAt - rtt / 2;
+
+    // Reboot confirmation: the firmware clock (Date.now on the device) only
+    // ever moves forward while it is up, so a hello whose ts is *earlier* than
+    // the previous one means the ESP32 rebooted between handshakes — the ground
+    // truth a BLE-only drop (link glitch, device stayed up) cannot produce.
+    if (this.#lastHelloTs > 0 && fwTs < this.#lastHelloTs) {
+      this.#deps.logger.warn(
+        { prevTs: this.#lastHelloTs, ts: fwTs },
+        'firmware clock reset (reboot confirmed)',
+      );
+    }
+    this.#lastHelloTs = fwTs;
 
     clearTimeout(this.#awaitingHello.timer);
     const { resolve } = this.#awaitingHello;
@@ -291,6 +314,19 @@ export class ProtocolSession {
 
   #onLinkDead(): void {
     if (this.#reconnecting) return;
+
+    // Reboot inference: log the drop with how long the device had been up and
+    // whether a write was awaiting an ack when it vanished. A regular uptime
+    // points at a watchdog/timer, an irregular one at brownout; a drop with a
+    // send in flight points at a firmware crash mid-write. Only meaningful once
+    // a link actually existed (skip the never-connected startup path).
+    if (this.#lastLinkUpAt > 0) {
+      this.#deps.logger.warn(
+        { uptimeMs: this.#now() - this.#lastLinkUpAt, sendInFlight: this.#pending !== null },
+        'link down',
+      );
+    }
+
     this.#setLinkHealthy(false); // D16: the face must stop claiming things
     this.#stopHeartbeat();
     this.#stopHelloTimers();

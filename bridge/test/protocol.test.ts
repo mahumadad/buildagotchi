@@ -199,6 +199,52 @@ describe('ProtocolSession', () => {
     expect(counters.ble_reconnects_total).toBe(1);
   });
 
+  it('logs a "link down" diagnostic with uptime when a live link dies', async () => {
+    const transport = new LoopbackTransport({ dropSeqs: new Set([2, 3]) });
+    const warn = vi.fn();
+    const logger = { warn, info: vi.fn(), debug: vi.fn(), error: vi.fn() } as unknown as Logger;
+    const session = new ProtocolSession(transport, baseCfg(), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics: makeMetrics().metrics,
+      logger,
+    });
+
+    await session.start();
+    await vi.advanceTimersByTimeAsync(3_000); // the device stays up 3s...
+    session.sendState(STATE_A); // seq 2, dropped
+    await vi.advanceTimersByTimeAsync(500); // retry seq 3, also dropped
+    await vi.advanceTimersByTimeAsync(500); // second miss -> #onLinkDead
+
+    const call = warn.mock.calls.find((c) => c[1] === 'link down');
+    expect(call).toBeDefined();
+    expect(call?.[0]).toMatchObject({ sendInFlight: expect.any(Boolean) });
+    expect(call?.[0].uptimeMs).toBeGreaterThanOrEqual(3_000);
+  });
+
+  it('flags a firmware clock reset when the reconnect hello ts jumps backwards (reboot)', async () => {
+    const transport = new LoopbackTransport({ dropSeqs: new Set([2, 3]) });
+    const warn = vi.fn();
+    const logger = { warn, info: vi.fn(), debug: vi.fn(), error: vi.fn() } as unknown as Logger;
+    const session = new ProtocolSession(transport, baseCfg(), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics: makeMetrics().metrics,
+      logger,
+    });
+
+    await session.start(); // hello 1: ts ~ now
+    transport.setFwClockSkew(-1_000_000); // the device reboots -> its clock resets far back
+    session.sendState(STATE_A); // seq 2, dropped
+    await vi.advanceTimersByTimeAsync(500); // retry seq 3, dropped
+    await vi.advanceTimersByTimeAsync(500); // ack miss -> reconnect scheduled
+    await vi.advanceTimersByTimeAsync(1_000); // backoff -> reconnect -> hello 2 (ts jumped back)
+
+    const call = warn.mock.calls.find((c) => c[1] === 'firmware clock reset (reboot confirmed)');
+    expect(call).toBeDefined();
+    expect(call?.[0]).toMatchObject({ prevTs: expect.any(Number), ts: expect.any(Number) });
+  });
+
   it('a connect() failure during reconnect retries with backoff instead of crashing', async () => {
     // The CoreS3 stops advertising while it reboots (e.g. after a flash), so the
     // reconnect scan rejects. That rejection used to escape `void

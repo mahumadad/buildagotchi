@@ -110,6 +110,15 @@ export class LoopbackTransport implements Transport {
     this.#failConnectRemaining = n;
   }
 
+  /**
+   * Shift the simulated firmware clock. A real CoreS3 reboot resets Date.now()
+   * back toward zero, so a test drives this negative before a reconnect hello to
+   * reproduce the backward ts jump the reboot detector keys on.
+   */
+  setFwClockSkew(ms: number): void {
+    this.#fwClockSkewMs = ms;
+  }
+
   sentLines(): string[] {
     return [...this.#sentLines];
   }
