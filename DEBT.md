@@ -571,17 +571,31 @@ deja de redescubrir el device aunque esté anunciándose → contadores del brid
 es lo que hizo parecer "device colgado/muerto" en la caza del 2026-07-26 — era el bridge, no
 el device.
 
-**Qué lo haría explotar**: A hace que el buddy pierda el estado y re-loguee cada ~5min
-(molesto pero se recupera); B lo deja inutilizable hasta reiniciar el bridge a mano.
+**Qué lo haría explotar**: A hace que el buddy pierda el estado y re-loguee (molesto pero se
+recupera); B lo deja inutilizable hasta reiniciar el bridge a mano.
 
-**Costo**: medio. Para B: reciclar el scanner de noble tras N reconnects, o un watchdog que
-reinicie el transporte si `reconnect_duration` supera un umbral. Para A: subir el margen del
-heartbeat (¿20-30s?) para tolerar el bloqueo de 15s, y/o instrumentar el firmware para ver
-qué lo calla 15s cada ~5min (¿timer? ¿BLE físico?). Primero confirmar periodicidad con un
-soak largo mirando los `link down` del bridge.
+**Estado (2026-07-26):**
+- **B — RESUELTO** (commit 219bf0f). `Transport.reset?()` opcional; `NobleTransport.reset()`
+  hace `noble.reset()` (+ stopScanning + removeAllListeners) para re-inicializar el binding
+  nativo in-process; `ProtocolSession` lo llama cada 4 fallos de reconnect consecutivos
+  (`RESET_TRANSPORT_AFTER_ATTEMPTS`). Test en protocol.test.ts. Des-wedgea el scanner sin
+  reiniciar el proceso.
+- **A — latencia RESUELTA, frecuencia pendiente** (commit 5cdcb12). Diagnóstico: los drops
+  NO son un timer fijo — intervalos VARIABLES medidos por poller de `/metrics`: 3.0 / 1.5 /
+  3.3 / 4.85 min → **BLE físico flapeando** (supervision timeout / connection interval de
+  NimBLE / gestión de CoreBluetooth de macOS). Lo que SÍ se arregló: `ProtocolSession` no
+  escuchaba `onStateChange` del transport, así que un `disconnect` físico pasaba inadvertido
+  15s hasta que el watchdog de heartbeat lo cazaba → 15s muertos por cada flap. Ahora un
+  `disconnected` con heartbeat activo dispara `#onLinkDead` de inmediato → recuperación en
+  ~2s en vez de ~17s. **Pendiente (reduce la FRECUENCIA, no la latencia): tunear los params
+  de conexión BLE en el firmware** (subir supervision timeout para tolerar glitches de RF;
+  quizá pedir un connection interval preferido). El mod usa `BLEServer` con params default,
+  no los toca (mod.js:517 `BuildagotchiServer`). Ciclo de firmware (build+flash ~15min) +
+  soak largo mirando `link down` para medir mejora. OJO: los dos watchdogs de 15s (bridge y
+  mod `armSafeMode` mod.js:1015) son simétricos y agresivos; considerar subir el margen.
 
 **Bug menor relacionado**: `/health` reporta `transport.reconnects` desincronizado de
-`ble_reconnects_total` (el health da 0 mientras el metric va en 29). El health miente.
+`ble_reconnects_total` (el health da 0 mientras el metric va en decenas). El health miente.
 
 ---
 
