@@ -551,6 +551,12 @@ export class ProtocolSession {
 
   #handleLine(line: string): void {
     this.#inboundSinceLastWindow = true; // SA8: any inbound line counts as liveness
+    // D-25 observability: a monotonically increasing count of inbound lines from
+    // the device. Polling it externally shows, from the bridge side alone (no
+    // device serial needed), exactly when inbound stops before a drop and that it
+    // resumes the instant a reconnect completes — the signature of macOS letting
+    // the connection go stale rather than the firmware stalling.
+    this.#deps.metrics.counter('ble_inbound_lines_total').inc();
 
     let parsed: unknown;
     try {

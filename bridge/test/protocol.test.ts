@@ -275,6 +275,24 @@ describe('ProtocolSession', () => {
     expect(counters.ble_reconnects_total).toBe(1);
   });
 
+  it('counts inbound lines from the device for stale-detection observability (D-25)', async () => {
+    const transport = new LoopbackTransport();
+    const { metrics, counters } = makeMetrics();
+    const session = new ProtocolSession(transport, baseCfg(), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics,
+      logger: makeLogger(),
+    });
+
+    await session.start(); // hello round-trip already yields inbound
+    expect((counters.ble_inbound_lines_total ?? 0) > 0).toBe(true);
+
+    const before = counters.ble_inbound_lines_total ?? 0;
+    transport.inject('{"v":1,"seq":0,"t":"hb","ts":0,"p":{}}');
+    expect(counters.ble_inbound_lines_total).toBe(before + 1);
+  });
+
   it('proactively reconnects every N minutes to refresh the link (D-25 A)', async () => {
     // A healthy link is torn down and re-established on a fixed cadence so it
     // never ages into the macOS "notifications silently stop" state. Nothing
