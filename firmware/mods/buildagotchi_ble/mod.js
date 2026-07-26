@@ -5,6 +5,8 @@
  */
 import { SimpleFace } from 'behaviors/face'
 import BLEServer from 'bleserver'
+import { uuid } from 'btutils'
+import { SM, IOCapability } from 'sm'
 import { Emoticon } from 'effects/emoticon'
 import { Behavior, Container, Content, Skin, Style, Text, Texture } from 'piu/MC'
 import Timer from 'timer'
@@ -163,7 +165,17 @@ const ThemeBubble = Container.template(($) => ({
 }))
 
 const SAFE_MODE_MS = 15_000
-const DEVICE_NAME = 'buildagotchi'
+// MUST start with "Claude": Claude Desktop's Hardware Buddy picker filters the
+// device list by name prefix "Claude" (per REFERENCE.md; third parties do the same,
+// e.g. "Claude Flipper"). The NUS UUID is only the transport used AFTER connecting,
+// so it does not need to be advertised for discovery — the name is what gets the
+// device into the picker. The bridge's deviceNamePrefix in config.yaml must match.
+const DEVICE_NAME = 'Claude-SC3'
+// Nordic UART Service UUID — the same the host's uartserver exposes over GATT and
+// the same Anthropic's Hardware Buddy protocol scans for. Advertising it (below)
+// makes the robot discoverable by Claude Desktop's maker/BLE panel, not just by
+// our own bridge (which matches on the name).
+const NUS_UUID = uuid`6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
 /** Host uart TX/RX characteristic maxBytes (uart.json). */
 const NUS_CHUNK = 64
 /** Same window as default-mods petting (fwd+bwd swipe ⇒ pet). */
@@ -505,11 +517,22 @@ function hybridBalloonLayout(text) {
 }
 
 function startAdvertising(server) {
-  // Same pattern as fase0_r2 — completeName only (fits ADV; NUS UUID via GATT after connect).
+  // Advertise the NUS UUID in the primary packet (flags 3B + 128-bit UUID 18B = 21B,
+  // fits 31B) so UUID-filtering scanners — Claude Desktop's Hardware Buddy — discover
+  // the robot. The name goes in the scan response (14B) so our own bridge (noble reads
+  // the localName from the active-scan response) still matches on "buildagotchi".
+  // Both couldn't share one 31B packet, which is why the old code advertised name-only.
   server.startAdvertising({
+    // Name in the primary packet so every scanner (and the Hardware Buddy picker,
+    // which filters by name) sees "Claude-SC3". The NUS UUID goes in the scan
+    // response — it's only the post-connect transport, not needed for discovery,
+    // and wouldn't fit alongside a 10-char name in the 31-byte primary packet.
     advertisingData: {
       flags: 6,
       completeName: DEVICE_NAME,
+    },
+    scanResponseData: {
+      completeUUID128List: [NUS_UUID],
     },
   })
 }
@@ -546,9 +569,75 @@ class BuildagotchiServer extends BLEServer {
   }
 
   onReady() {
+    // TESTING: wipe any stored bond every boot. A stale bond from a failed pairing
+    // makes a bonded peripheral fall back to directed advertising (only to the old
+    // central) and macOS filter it from the discoverable list — so it "disappears".
+    // Clearing on boot keeps the robot generally discoverable and re-pairable. Once
+    // pairing is solid this should be gated (keep bonds so re-pairing isn't needed).
+    try {
+      SM.deleteAllBondings()
+      trace('[buildagotchi_ble] cleared all bondings\n')
+    } catch (e) {
+      trace(`[buildagotchi_ble] deleteAllBondings error ${e}\n`)
+    }
+    // Claude Desktop's Hardware Buddy requires LE Secure Connections bonding with
+    // a passkey (its reference firmware uses SC + MITM + BOND, DisplayOnly). Declare
+    // the same capability so Claude will pair. DisplayOnly = we show a 6-digit
+    // passkey (onPasskeyDisplay) and the Mac prompts the user to type it. The NUS
+    // characteristics are NOT marked encryption-only (that lives in the host's GATT
+    // definition), so our own bridge (noble, no pairing) can still read/write them.
+    try {
+      // Just Works pairing: bonded + encrypted, no passkey to display/enter and
+      // no MITM. Simplest flow that still gives Claude the bonded, encrypted link
+      // it wants — and no on-screen passkey to fail on. If Claude turns out to
+      // REQUIRE MITM, switch back to { mitm:true, ioCapability:DisplayOnly } and
+      // fix the on-screen passkey (onPasskeyDisplay below).
+      this.securityParameters = {
+        encryption: true,
+        mitm: false,
+        bonding: true,
+        ioCapability: IOCapability.NoInputNoOutput,
+      }
+    } catch (e) {
+      trace(`[buildagotchi_ble] securityParameters error ${e}\n`)
+    }
     startAdvertising(this)
     this.armSafeMode()
-    trace('[buildagotchi_ble] advertising as buildagotchi\n')
+    trace('[buildagotchi_ble] advertising as buildagotchi (secure pairing enabled)\n')
+  }
+
+  // Passkey Entry pairing (DisplayOnly): show the 6-digit passkey on the robot's
+  // screen so the user can type it into the Mac's pairing prompt.
+  onPasskeyDisplay(params) {
+    try {
+      const pk = this.passkeyToString(params.passkey)
+      trace(`[buildagotchi_ble] passkey display ${pk}\n`)
+      this.applyBalloon(this.robot, `PIN ${pk}`)
+    } catch (e) {
+      trace(`[buildagotchi_ble] passkey display error ${e}\n`)
+    }
+  }
+
+  onPasskeyConfirm(params) {
+    // Numeric-comparison fallback (if the central negotiates it): show the number
+    // and accept — the user compares it on both screens.
+    try {
+      const pk = this.passkeyToString(params.passkey)
+      trace(`[buildagotchi_ble] passkey confirm ${pk}\n`)
+      this.applyBalloon(this.robot, `PIN ${pk}?`)
+      this.passkeyReply(params.address, true)
+    } catch (e) {
+      trace(`[buildagotchi_ble] passkey confirm error ${e}\n`)
+    }
+  }
+
+  onAuthenticated(params) {
+    trace(`[buildagotchi_ble] authenticated (bonded=${params?.bonded})\n`)
+    try {
+      this.applyBalloon(this.robot, '')
+    } catch (_e) {
+      /* ignore */
+    }
   }
 
   onConnected() {

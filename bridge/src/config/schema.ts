@@ -150,7 +150,7 @@ export const ConfigSchema = z.object({
       /** D-25 A: recycle the BLE link every N minutes before it goes stale. 0 = off. */
       proactiveReconnectMinutes: z.number().default(0),
       /** Advertise name prefix to match when scanning (Fase 1B). */
-      deviceNamePrefix: z.string().default('buildagotchi'),
+      deviceNamePrefix: z.string().default('Claude'),
       reconnectBackoff: z
         .object({
           initial: Duration.default('1s'),
