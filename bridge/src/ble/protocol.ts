@@ -9,6 +9,13 @@ const HELLO_REFRESH_MS = 10 * 60 * 1_000;
 const ACK_TIMEOUT_MS = 500;
 /** D-10: how many in-flight `seq → eventId` entries to keep before evicting oldest. */
 const SEQ_EVENT_ID_MAX = 32;
+/**
+ * D-25 B: after this many consecutive failed reconnects, hard-reset the transport
+ * before the next attempt. A plain reconnect reuses the wedged noble singleton and
+ * can loop forever; reset() re-initialises it. Every Nth failure retries the reset
+ * in case the first didn't take.
+ */
+const RESET_TRANSPORT_AFTER_ATTEMPTS = 4;
 
 export interface BleConfig {
   heartbeatSeconds: number;
@@ -350,6 +357,21 @@ export class ProtocolSession {
   }
 
   async #attemptReconnect(): Promise<void> {
+    // D-25 B: a wedged noble scanner fails every attempt forever; periodically
+    // reset the transport to clear it, before spending another scan window on it.
+    if (
+      this.#transport.reset &&
+      this.#reconnectAttempt > 0 &&
+      this.#reconnectAttempt % RESET_TRANSPORT_AFTER_ATTEMPTS === 0
+    ) {
+      this.#deps.logger.warn(
+        { attempt: this.#reconnectAttempt },
+        'reconnect stuck; resetting BLE transport',
+      );
+      await this.#transport
+        .reset()
+        .catch((err: unknown) => this.#deps.logger.warn({ err }, 'transport reset failed'));
+    }
     try {
       await this.#transport.disconnect();
       await this.#transport.connect();

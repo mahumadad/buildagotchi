@@ -38,6 +38,7 @@ export class LoopbackTransport implements Transport {
   #failConnectRemaining: number;
   #state: TransportState = 'disconnected';
   #dead = false;
+  #resetCount = 0;
   #sentLines: string[] = [];
   #lineCb: ((line: string) => void) | null = null;
   #stateCb: ((s: TransportState) => void) | null = null;
@@ -89,6 +90,23 @@ export class LoopbackTransport implements Transport {
 
   onStateChange(cb: (s: TransportState) => void): void {
     this.#stateCb = cb;
+  }
+
+  /**
+   * Stand-in for NobleTransport.reset(): the reconnect loop calls this after
+   * repeated failures. Counts invocations and clears the simulated wedge
+   * (`failConnectRemaining`) so the next connect() succeeds — modelling a real
+   * noble reset recovering a stuck scanner.
+   */
+  reset(): Promise<void> {
+    this.#resetCount += 1;
+    this.#failConnectRemaining = 0;
+    this.#setState('disconnected');
+    return Promise.resolve();
+  }
+
+  resetCount(): number {
+    return this.#resetCount;
   }
 
   // --- test controls -------------------------------------------------

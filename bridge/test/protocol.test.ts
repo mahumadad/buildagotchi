@@ -275,6 +275,38 @@ describe('ProtocolSession', () => {
     expect(counters.ble_reconnects_total).toBe(1);
   });
 
+  it('resets the transport after repeated failed reconnects, then recovers (D-25 B)', async () => {
+    // A wedged noble scanner fails every reconnect forever; only a transport
+    // reset clears it. failNextConnects(100) never runs out on its own, so the
+    // only way this reconnects is the reset firing at the 4th failed attempt
+    // (RESET_TRANSPORT_AFTER_ATTEMPTS) and clearing the wedge.
+    const transport = new LoopbackTransport({ dropSeqs: new Set([2, 3]) });
+    const { metrics, counters } = makeMetrics();
+    const session = new ProtocolSession(transport, baseCfg(), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics,
+      logger: makeLogger(),
+    });
+
+    await session.start();
+    transport.failNextConnects(100); // every reconnect scan wedges
+    session.sendState(STATE_A); // seq 2, dropped
+    await vi.advanceTimersByTimeAsync(500); // retry seq 3, dropped
+    await vi.advanceTimersByTimeAsync(500); // ack miss -> reconnection scheduled
+
+    // Attempts 0..3 (backoff 1+2+4+8s) all reject; reset has NOT fired yet.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(transport.resetCount()).toBe(0);
+    expect(counters.ble_reconnects_total ?? 0).toBe(0);
+
+    // Attempt 4 (backoff caps at 10s): reset fires first, clears the wedge, then
+    // connect() succeeds -> reconnected.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(transport.resetCount()).toBe(1);
+    expect(counters.ble_reconnects_total).toBe(1);
+  });
+
   it('a failed initial connect keeps the bridge up and retries instead of aborting startup', async () => {
     // The device isn't advertising at startup (e.g. still booting after a flash).
     // start() must resolve — not throw and take the whole process down — and the

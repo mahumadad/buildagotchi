@@ -47,6 +47,8 @@ export interface NobleLike {
   ): void;
   removeListener?(event: string, cb: (...args: never[]) => void): void;
   removeAllListeners?(event?: string): void;
+  /** @abandonware/noble: re-initialises the native binding (clears a wedged scanner). */
+  reset?(): void;
 }
 
 export type NobleFactory = () => NobleLike;
@@ -135,6 +137,29 @@ export class NobleTransport implements Transport {
       this.#writeChain = Promise.resolve();
       this.#setState('disconnected');
     }
+  }
+
+  /**
+   * Re-initialise the process-wide @abandonware/noble singleton. connect()
+   * reuses that singleton on every reconnect (require() caches it), so over many
+   * reconnect cycles its macOS CoreBluetooth scanner can wedge: startScanning
+   * resolves but no 'discover' events ever fire, and every reconnect then times
+   * out forever — only restarting the process recovered (D-25 B). reset() clears
+   * that state in-process. The reconnect loop calls this after repeated failures.
+   */
+  async reset(): Promise<void> {
+    const noble = this.#noble ?? this.#nobleFactory();
+    await noble.stopScanningAsync().catch(() => undefined);
+    noble.removeAllListeners?.('discover');
+    noble.removeAllListeners?.('stateChange');
+    noble.reset?.();
+    this.#noble = null;
+    this.#peripheral = null;
+    this.#rx = null;
+    this.#rxBuffer = '';
+    this.#writeChain = Promise.resolve();
+    this.#setState('disconnected');
+    logger.warn({ prefix: this.#prefix }, 'noble transport reset (recovering wedged scanner)');
   }
 
   send(line: string): void {
