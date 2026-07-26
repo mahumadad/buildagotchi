@@ -556,12 +556,38 @@ evidencia, NO causado por el fix de heap (D-23): el device queda sano y sin rebo
 **A) Drop periódico.** Con el link sano, cae cada ~5 min: log `link down, uptimeMs:291357,
 sendInFlight:false` → el device deja de responder heartbeats por 15s → el watchdog de 15s
 del bridge (`heartbeatSeconds:5 × missesBeforeDead:3`, protocol.ts:305) lo declara muerto.
-`sendInFlight:false` + uptime regular → el comentario del propio código (protocol.ts:318)
-lo lee como **watchdog/timer**, no crash mid-write. Recupera normalmente en ~2s
-(`noble connected` → `ble link up`). NO es reboot (sin `rst`, reconexión instantánea).
-Causa de fondo sin pinpointear: o el BLE físico se cae (supervision timeout / power-mgmt de
-macOS / stack BLE del device) o algo en el firmware bloquea 15s cada ~5min. Un solo drop
-observado; falta confirmar periodicidad y correlato.
+`sendInFlight:false` → camino de heartbeat (no ack-miss). Intervalos VARIABLES medidos por
+poller de `/metrics`: 40s / 90s / 180s / 195s / 291s.
+
+**Raíz concluida por razonamiento (2026-07-26, el serial no dio para confirmar directo — ver
+abajo): conexión BLE rancia del lado macOS, NO el firmware.** Evidencia decisiva: cuando cae,
+un disconnect+reconnect **revive el link en ~2.6s y el device responde al instante** (hello +
+hb). Si el firmware se hubiera stalleado/crasheado, no respondería tan rápido tras el
+reconnect → el firmware estuvo vivo todo el tiempo. Lo que se pone rancio es la entrega de
+notificaciones de CoreBluetooth/noble en conexiones largas (issue conocido de macOS: las
+notify se cortan en silencio aunque la conexión siga "up"; solo un reconnect las restaura).
+Por eso NO se ve un `disconnect` de noble (mi fix de `onStateChange`, commit 5cdcb12, no
+aplica a este caso) y solo el watchdog de heartbeat lo caza a los 15s. **Tunear NimBLE no lo
+arreglaría.**
+
+**Fix aplicado (mitigación del lado correcto): reconnect proactivo** (commit 56272b4).
+`ble.proactiveReconnectMinutes` (config.yaml local = 2): el bridge recicla el link cada N min
+ANTES de que envejezca al estado rancio → cambia un stall aleatorio de ~17s por un blip
+controlado de ~2s. Timer de vida-de-sesión que se auto-salta si está reconectando o caído.
+**PENDIENTE DE VALIDAR empíricamente**: tras reiniciar el bridge con esto activo, medir si la
+tasa de drops aleatorios baja (mirar `link down` vs `proactive BLE reconnect` en el log). Si
+la staleness NO es age-based, el proactivo suma blips sin evitar los aleatorios — habría que
+subir/bajar el intervalo o descartarlo. Necesita reinicio del bridge (el cfg se lee al
+construir `ProtocolSession`, no hot-reload).
+
+**MURO DE OBSERVABILIDAD (anotar para la próxima):** no se pudo confirmar la raíz por serial
+porque **el CDC USB nativo del ESP32-S3 no entrega `trace()` de forma fiable a pyserial** —
+solo emite sostenido justo tras un boot por hardware limpio, y aun así intermitente; abrir el
+puerto en un device ya corriendo suele dar 0 bytes aunque esté vivo (BLE conectado). Se
+intentó correlacionar serial-del-device vs drops-del-bridge en un reloj común (scripts
+`correlate*.py`) y falló por esto. Para la próxima: instrumentar el BRIDGE (contar notify
+inbound en transport-noble `#onNotify`) para ver desde el lado del Mac si el inbound se corta,
+sin depender del serial roto; o un tap UART por hardware.
 
 **B) Discovery de noble se wedgea.** La reconexión que debería ser ~2s a veces se vuelve
 87s / 18min / "muerto hasta reiniciar el bridge". `reconnect_duration_ms` bimodal (p50 2.1s,
@@ -580,19 +606,15 @@ recupera); B lo deja inutilizable hasta reiniciar el bridge a mano.
   nativo in-process; `ProtocolSession` lo llama cada 4 fallos de reconnect consecutivos
   (`RESET_TRANSPORT_AFTER_ATTEMPTS`). Test en protocol.test.ts. Des-wedgea el scanner sin
   reiniciar el proceso.
-- **A — latencia RESUELTA, frecuencia pendiente** (commit 5cdcb12). Diagnóstico: los drops
-  NO son un timer fijo — intervalos VARIABLES medidos por poller de `/metrics`: 3.0 / 1.5 /
-  3.3 / 4.85 min → **BLE físico flapeando** (supervision timeout / connection interval de
-  NimBLE / gestión de CoreBluetooth de macOS). Lo que SÍ se arregló: `ProtocolSession` no
-  escuchaba `onStateChange` del transport, así que un `disconnect` físico pasaba inadvertido
-  15s hasta que el watchdog de heartbeat lo cazaba → 15s muertos por cada flap. Ahora un
-  `disconnected` con heartbeat activo dispara `#onLinkDead` de inmediato → recuperación en
-  ~2s en vez de ~17s. **Pendiente (reduce la FRECUENCIA, no la latencia): tunear los params
-  de conexión BLE en el firmware** (subir supervision timeout para tolerar glitches de RF;
-  quizá pedir un connection interval preferido). El mod usa `BLEServer` con params default,
-  no los toca (mod.js:517 `BuildagotchiServer`). Ciclo de firmware (build+flash ~15min) +
-  soak largo mirando `link down` para medir mejora. OJO: los dos watchdogs de 15s (bridge y
-  mod `armSafeMode` mod.js:1015) son simétricos y agresivos; considerar subir el margen.
+- **A — raíz = conexión rancia Mac-side (NO firmware); 3 fixes** (ver el análisis de arriba
+  para la evidencia). (1) **Latencia** (commit 5cdcb12): `ProtocolSession` no escuchaba
+  `onStateChange`, así un `disconnect` limpio pasaba 15s inadvertido; ahora dispara
+  `#onLinkDead` inmediato (~2s en vez de ~17s). NB: no aplica al caso dominante (que NO emite
+  `disconnect`), pero es correcto para los limpios. (2) **Reconnect proactivo** (commit
+  56272b4): `ble.proactiveReconnectMinutes` recicla el link antes de que envejezca — el fix
+  del lado correcto. **PENDIENTE DE VALIDAR** que reduce los drops aleatorios (medir tras
+  reinicio del bridge). (3) Descartado tunear NimBLE: la raíz es macOS, no el firmware.
+  OJO: los dos watchdogs de 15s (bridge + mod `armSafeMode` mod.js:1015) son simétricos.
 
 **Bug menor relacionado**: `/health` reporta `transport.reconnects` desincronizado de
 `ble_reconnects_total` (el health da 0 mientras el metric va en decenas). El health miente.
