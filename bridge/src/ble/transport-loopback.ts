@@ -123,6 +123,11 @@ export class LoopbackTransport implements Transport {
     this.#lineCb?.(line);
   }
 
+  /** Simulate an unsolicited physical link drop (noble peripheral 'disconnect'). */
+  simulateDrop(): void {
+    this.#setState('disconnected');
+  }
+
   /** Make the next N `connect()` calls reject (e.g. reconnect while rebooting). */
   failNextConnects(n: number): void {
     this.#failConnectRemaining = n;

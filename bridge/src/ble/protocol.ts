@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
 import type { ResolvedState } from '../core/events.js';
-import type { Transport } from './transport.js';
+import type { Transport, TransportState } from './transport.js';
 
 const BRIDGE_VERSION = '0.1.0';
 const HELLO_TIMEOUT_MS = 2_000;
@@ -148,6 +148,7 @@ export class ProtocolSession {
 
   async start(): Promise<void> {
     this.#transport.onLine((line) => this.#handleLine(line));
+    this.#transport.onStateChange((s) => this.#onTransportState(s));
     try {
       await this.#transport.connect();
     } catch (err) {
@@ -318,6 +319,22 @@ export class ProtocolSession {
   }
 
   // --- reconnection ------------------------------------------------------
+
+  #onTransportState(s: TransportState): void {
+    // A physical BLE drop (noble peripheral 'disconnect') flips the transport to
+    // 'disconnected' but delivers no inbound line, so without reacting here the
+    // heartbeat watchdog wouldn't declare the link dead for
+    // missesBeforeDead*heartbeatSeconds (~15s) — 15s of dead air before recovery
+    // even starts. Trigger #onLinkDead now so reconnection begins in ~2s.
+    // Guarded to the live-link case: #hbTimer!=null means we had an active link
+    // (the initial-connect churn runs before the heartbeat starts), and the
+    // teardown/reconnect this kicks off flips the transport through
+    // 'disconnected' again — #onLinkDead's own #reconnecting guard absorbs that.
+    if (s === 'disconnected' && this.#hbTimer !== null && !this.#reconnecting) {
+      this.#deps.logger.warn('transport disconnected; treating link as down');
+      this.#onLinkDead();
+    }
+  }
 
   #onLinkDead(): void {
     if (this.#reconnecting) return;

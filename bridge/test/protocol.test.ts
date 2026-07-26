@@ -275,6 +275,29 @@ describe('ProtocolSession', () => {
     expect(counters.ble_reconnects_total).toBe(1);
   });
 
+  it('reacts to a physical transport disconnect in ~2s, not after the 15s heartbeat (D-25 A)', async () => {
+    // A physical BLE drop flips the transport to 'disconnected' with no inbound
+    // line. Without wiring onStateChange, the heartbeat watchdog wouldn't notice
+    // for missesBeforeDead*heartbeatSeconds = 15s. Reconnection must instead
+    // start from the state change, so it completes on the first 1s backoff.
+    const transport = new LoopbackTransport();
+    const { metrics, counters } = makeMetrics();
+    const session = new ProtocolSession(transport, baseCfg(), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics,
+      logger: makeLogger(),
+    });
+
+    await session.start();
+    expect(counters.ble_reconnects_total ?? 0).toBe(0);
+
+    transport.simulateDrop(); // unsolicited physical drop, no heartbeat miss
+
+    await vi.advanceTimersByTimeAsync(1_000); // first backoff only — well under 15s
+    expect(counters.ble_reconnects_total).toBe(1);
+  });
+
   it('resets the transport after repeated failed reconnects, then recovers (D-25 B)', async () => {
     // A wedged noble scanner fails every reconnect forever; only a transport
     // reset clears it. failNextConnects(100) never runs out on its own, so the
