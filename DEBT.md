@@ -547,6 +547,42 @@ heap fijo. Bajar el churn da más margen aún y GC más espaciado.
 **Costo**: bajo. Precomputar `doubled = unit + unit` una vez en `startBalloonMarquee` (no
 cambia entre ticks) y solo hacer el `slice` por tick. Commit propio, no mezclar con otra cosa.
 
+## D-25 — caída periódica del link BLE (~5 min) + discovery de noble que se wedgea
+
+**Dónde**: dos sub-issues, caracterizados con logs limpios del bridge 2026-07-26 (tras
+reiniciar el bridge, que resolvió el estado wedged). Es el viejo "bug #2", ahora con
+evidencia, NO causado por el fix de heap (D-23): el device queda sano y sin reboots.
+
+**A) Drop periódico.** Con el link sano, cae cada ~5 min: log `link down, uptimeMs:291357,
+sendInFlight:false` → el device deja de responder heartbeats por 15s → el watchdog de 15s
+del bridge (`heartbeatSeconds:5 × missesBeforeDead:3`, protocol.ts:305) lo declara muerto.
+`sendInFlight:false` + uptime regular → el comentario del propio código (protocol.ts:318)
+lo lee como **watchdog/timer**, no crash mid-write. Recupera normalmente en ~2s
+(`noble connected` → `ble link up`). NO es reboot (sin `rst`, reconexión instantánea).
+Causa de fondo sin pinpointear: o el BLE físico se cae (supervision timeout / power-mgmt de
+macOS / stack BLE del device) o algo en el firmware bloquea 15s cada ~5min. Un solo drop
+observado; falta confirmar periodicidad y correlato.
+
+**B) Discovery de noble se wedgea.** La reconexión que debería ser ~2s a veces se vuelve
+87s / 18min / "muerto hasta reiniciar el bridge". `reconnect_duration_ms` bimodal (p50 2.1s,
+p95 1.074.465ms). Tras muchas horas / decenas de reconnects, el noble de macOS del proceso
+deja de redescubrir el device aunque esté anunciándose → contadores del bridge congelados,
+`connected:false` permanente. **Reiniciar el bridge lo arregla** (redescubre en ~87s). Esto
+es lo que hizo parecer "device colgado/muerto" en la caza del 2026-07-26 — era el bridge, no
+el device.
+
+**Qué lo haría explotar**: A hace que el buddy pierda el estado y re-loguee cada ~5min
+(molesto pero se recupera); B lo deja inutilizable hasta reiniciar el bridge a mano.
+
+**Costo**: medio. Para B: reciclar el scanner de noble tras N reconnects, o un watchdog que
+reinicie el transporte si `reconnect_duration` supera un umbral. Para A: subir el margen del
+heartbeat (¿20-30s?) para tolerar el bloqueo de 15s, y/o instrumentar el firmware para ver
+qué lo calla 15s cada ~5min (¿timer? ¿BLE físico?). Primero confirmar periodicidad con un
+soak largo mirando los `link down` del bridge.
+
+**Bug menor relacionado**: `/health` reporta `transport.reconnects` desincronizado de
+`ble_reconnects_total` (el health da 0 mientras el metric va en 29). El health miente.
+
 ---
 
 ## Resueltas en la maratón de estabilidad (2026-07-25)
