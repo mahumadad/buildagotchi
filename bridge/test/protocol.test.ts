@@ -275,6 +275,42 @@ describe('ProtocolSession', () => {
     expect(counters.ble_reconnects_total).toBe(1);
   });
 
+  it('proactively reconnects every N minutes to refresh the link (D-25 A)', async () => {
+    // A healthy link is torn down and re-established on a fixed cadence so it
+    // never ages into the macOS "notifications silently stop" state. Nothing
+    // fires before the interval; at the mark it reconnects on the first backoff.
+    const transport = new LoopbackTransport();
+    const { metrics, counters } = makeMetrics();
+    const session = new ProtocolSession(transport, baseCfg({ proactiveReconnectMinutes: 2 }), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics,
+      logger: makeLogger(),
+    });
+
+    await session.start();
+    await vi.advanceTimersByTimeAsync(2 * 60_000 - 1_000); // just before the 2-min mark
+    expect(counters.ble_reconnects_total ?? 0).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(1_000 + 1_000); // cross the mark + first 1s backoff
+    expect(counters.ble_reconnects_total).toBe(1);
+  });
+
+  it('does not proactively reconnect when the interval is unset (default off)', async () => {
+    const transport = new LoopbackTransport();
+    const { metrics, counters } = makeMetrics();
+    const session = new ProtocolSession(transport, baseCfg(), {
+      onInboundEvent: vi.fn(),
+      onLinkChange: vi.fn(),
+      metrics,
+      logger: makeLogger(),
+    });
+
+    await session.start();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(counters.ble_reconnects_total ?? 0).toBe(0);
+  });
+
   it('reacts to a physical transport disconnect in ~2s, not after the 15s heartbeat (D-25 A)', async () => {
     // A physical BLE drop flips the transport to 'disconnected' with no inbound
     // line. Without wiring onStateChange, the heartbeat watchdog wouldn't notice

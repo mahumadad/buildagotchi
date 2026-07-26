@@ -21,6 +21,13 @@ export interface BleConfig {
   heartbeatSeconds: number;
   missesBeforeDead: number;
   reconnectBackoff: { initial: number; max: number };
+  /**
+   * D-25 A: proactively tear down and re-establish the BLE link every N minutes,
+   * before macOS/noble lets it go stale (notifications silently stop while the
+   * connection still reads as "up", recovered only by a reconnect). Trades a
+   * random ~17s stall for a controlled ~2s blip. 0/undefined disables it.
+   */
+  proactiveReconnectMinutes?: number;
 }
 
 /**
@@ -123,6 +130,7 @@ export class ProtocolSession {
   #hbTimer: NodeJS.Timeout | null = null;
   #inboundSinceLastWindow = false;
   #missedWindows = 0;
+  #proactiveTimer: NodeJS.Timeout | null = null;
 
   #linkHealthy = false;
   #reconnecting = false;
@@ -176,11 +184,14 @@ export class ProtocolSession {
     }
 
     this.#startHeartbeat();
+    this.#startProactiveReconnect();
   }
 
   async stop(): Promise<void> {
     this.#stopHeartbeat();
     this.#stopHelloTimers();
+    if (this.#proactiveTimer) clearInterval(this.#proactiveTimer);
+    this.#proactiveTimer = null;
     if (this.#reconnectTimer) clearTimeout(this.#reconnectTimer);
     this.#reconnectTimer = null;
     if (this.#pending) clearTimeout(this.#pending.timer);
@@ -319,6 +330,23 @@ export class ProtocolSession {
   }
 
   // --- reconnection ------------------------------------------------------
+
+  #startProactiveReconnect(): void {
+    const mins = this.#cfg.proactiveReconnectMinutes;
+    if (!mins || mins <= 0) return;
+    // One interval for the session lifetime; it only acts when the link is live
+    // (heartbeat running, not already reconnecting), so it self-skips during a
+    // reconnect and resumes once healthy again. Reuses #onLinkDead's teardown +
+    // reconnect machinery — the extra 'link down' it logs is expected here.
+    this.#proactiveTimer = setInterval(
+      () => {
+        if (this.#reconnecting || this.#hbTimer === null) return;
+        this.#deps.logger.info('proactive BLE reconnect (refreshing link before it goes stale)');
+        this.#onLinkDead();
+      },
+      mins * 60 * 1_000,
+    );
+  }
 
   #onTransportState(s: TransportState): void {
     // A physical BLE drop (noble peripheral 'disconnect') flips the transport to
