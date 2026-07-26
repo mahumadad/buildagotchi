@@ -215,26 +215,24 @@ describe('BridgeServer touch gestures', () => {
     expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
   });
 
-  it('a single head tap on a non-critical permission only arms the double-tap guard (isolated Si12T phantoms cannot auto-approve)', () => {
-    // Measured 2026-07-24: the CoreS3 Si12T fires isolated phantom press/release
-    // events long after any servo activity — one such phantom auto-approved a
-    // plain `echo` permission ~94s after it was shown. Requiring double-tap for
-    // EVERY permission makes phantom approval effectively impossible.
+  it('a single head tap approves a non-critical permission (phantoms killed in firmware → no double-tap needed)', () => {
+    // 2026-07-25: TOUCH_ON=3 in the firmware eliminated the phantom taps that
+    // once auto-approved permissions, so a single deliberate touch is safe and
+    // the double-tap requirement is gone.
     const claudeAdapter = makeClaudeAdapterWithPendingPermission(false);
     claudeAdapter.resolvePermission = vi.fn(() => 'e1');
     const { server } = makeServer(claudeAdapter);
     tapHead(server);
-    expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
+    expect(claudeAdapter.resolvePermission).toHaveBeenCalledWith('s1', 'approved');
   });
 
-  it('two head taps within the window approve a non-critical permission (same shape as critical)', () => {
+  it('a hold (firm long press) also approves — firm contact reads as a hold, not a quick tap', () => {
     const claudeAdapter = makeClaudeAdapterWithPendingPermission(false);
     claudeAdapter.resolvePermission = vi.fn(() => 'e1');
     const { server } = makeServer(claudeAdapter);
-    tapHead(server);
-    vi.advanceTimersByTime(100);
-    tapHead(server);
-    expect(claudeAdapter.resolvePermission).toHaveBeenCalledTimes(1);
+    server.handleDeviceInput('touch', { gesture: 'press' });
+    vi.advanceTimersByTime(2100); // past holdMs → the recogniser fires 'hold'
+    server.handleDeviceInput('touch', { gesture: 'release' });
     expect(claudeAdapter.resolvePermission).toHaveBeenCalledWith('s1', 'approved');
   });
 
@@ -251,72 +249,21 @@ describe('BridgeServer touch gestures', () => {
     expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
   });
 
-  it('a head tap after the settle cooldown only arms the double-tap guard (still needs two taps)', () => {
-    // shownAt=5s ago → outside the cooldown window; universal double-tap kicks in.
+  it('a single head tap after the settle cooldown approves', () => {
+    // shownAt=5s ago → outside the cooldown window → the touch approves directly.
     const claudeAdapter = makeClaudeAdapterWithPendingPermission(false, Date.now() - 5_000);
     claudeAdapter.resolvePermission = vi.fn(() => 'e1');
     const { server } = makeServer(claudeAdapter);
     tapHead(server);
-    expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(100);
-    tapHead(server);
     expect(claudeAdapter.resolvePermission).toHaveBeenCalledWith('s1', 'approved');
   });
 
-  it('a single head tap on a critical permission only arms the double-tap guard', () => {
+  it('a single head tap approves a critical permission too', () => {
     const claudeAdapter = makeClaudeAdapterWithPendingPermission(true);
     claudeAdapter.resolvePermission = vi.fn(() => 'e1');
     const { server } = makeServer(claudeAdapter);
     tapHead(server);
-    expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
-  });
-
-  it('two head taps within the window approve a critical permission', () => {
-    const claudeAdapter = makeClaudeAdapterWithPendingPermission(true);
-    claudeAdapter.resolvePermission = vi.fn(() => 'e1');
-    const { server } = makeServer(claudeAdapter);
-    tapHead(server);
-    vi.advanceTimersByTime(100); // within the 700ms window
-    tapHead(server);
-    expect(claudeAdapter.resolvePermission).toHaveBeenCalledTimes(1);
     expect(claudeAdapter.resolvePermission).toHaveBeenCalledWith('s1', 'approved');
-  });
-
-  it('two slow head taps do not approve a critical permission', () => {
-    const claudeAdapter = makeClaudeAdapterWithPendingPermission(true);
-    claudeAdapter.resolvePermission = vi.fn(() => 'e1');
-    const { server } = makeServer(claudeAdapter);
-    tapHead(server);
-    vi.advanceTimersByTime(1_000); // past the 700ms window
-    tapHead(server);
-    expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
-  });
-
-  it('a double-tap across different sessions does not approve (cross-session guard)', () => {
-    const sessions = new Map<string, Record<string, unknown>>([
-      ['s1', { sessionId: 's1', cwd: '/tmp/p', state: 'permission_pending', lastEventAt: Date.now(), pendingPermission: { eventId: 'e1', isCritical: true } }],
-      ['s2', { sessionId: 's2', cwd: '/tmp/q', state: 'permission_pending', lastEventAt: Date.now(), pendingPermission: { eventId: 'e2', isCritical: true } }],
-    ]);
-    const claudeAdapter = {
-      sessions: vi.fn(() => sessions),
-      resolvePermission: vi.fn(() => 'e1'),
-      onSessionChangeCallback: null,
-      health: () => ({ status: 'HEALTHY' }),
-      name: 'claude',
-      start: vi.fn().mockResolvedValue(undefined),
-      stop: vi.fn().mockResolvedValue(undefined),
-    } as unknown as ClaudeAdapter;
-    const { server } = makeServer(claudeAdapter);
-
-    tapHead(server);
-    vi.advanceTimersByTime(100);
-
-    // Between taps, s1 disappears and s2 is now first in iteration order
-    sessions.delete('s1');
-
-    tapHead(server);
-    // The second tap arms s2 but does NOT approve it (sessionId mismatch)
-    expect(claudeAdapter.resolvePermission).not.toHaveBeenCalled();
   });
 
   it('a long press does NOT sleep the robot (SLEEP-on-hold disabled on CoreS3)', () => {

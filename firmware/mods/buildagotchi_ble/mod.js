@@ -1118,30 +1118,58 @@ function setupTouch(server, robot) {
   // a false release. No direction / centroid is considered, so a touch never
   // becomes a swipe. `emitTouch('press'|'release')` feeds the bridge's own
   // tap/hold recogniser exactly as before.
-  const TOUCH_ON = 2 // any zone >= this is contact; 2 (not 1) rejects the near-
-  // threshold noise flapping that flooded touch events and exhausted the heap
+  const TOUCH_ON = 3 // any zone >= this is contact. Measured 2026-07-25: the idle
+  // phantom noise peaks at exactly 2, so 2 sat on the noise floor; the Si12T tops
+  // out at 3 per zone, so 3 is the only clean separation — a real firm tap hits 3,
+  // the noise never does. Needs a firmer tap, but kills the phantom chatter.
+  // The Si12T fires phantom peaks with nobody touching it (verified 2026-07-25:
+  // continuous press/release with the robot untouched and unsupported). A single
+  // spike used to become an immediate press. Require the contact to PERSIST for
+  // TOUCH_ON_SAMPLES consecutive reads before trusting a press — a real tap lasts
+  // 180-800ms (≥4 reads at 50ms), phantom spikes are isolated, so the debounce
+  // rejects the noise without losing real taps. Any gap resets the run.
+  const TOUCH_ON_SAMPLES = 3 // ~150ms of sustained contact before a press
   const TOUCH_OFF_SAMPLES = 3 // consecutive empty reads before we trust a release
   let touched = false
+  let contactRun = 0
   let emptyRun = 0
+  let lastPeakTrace = 0
   panel.onSample = (sample, ticks) => {
     if (server.touchSuppressed) return // SAFETY: head moving → phantom readings
     const peak = Math.max(sample[0] || 0, sample[1] || 0, sample[2] || 0)
     const contact = peak >= TOUCH_ON
 
+    // Lightweight noise/tap diagnostic: trace the peak at most ~once/2s while it
+    // is non-zero, so the noise floor (peak 2) and real taps (peak 3) stay
+    // visible on serial without a flood. Characterised 2026-07-25: idle noise
+    // peaks at 2, a firm finger tap at 3 — TOUCH_ON=3 separates them cleanly.
+    const t = typeof ticks === 'number' ? ticks : 0
+    if (peak > 0 && t - lastPeakTrace >= 2000) {
+      lastPeakTrace = t
+      trace(`[buildagotchi_ble] touch peak=${peak}\n`)
+    }
+
     if (contact) {
       emptyRun = 0
       if (!touched) {
-        touched = true
-        trace('[buildagotchi_ble] touch press\n')
-        server.emitTouch('press')
+        contactRun++
+        if (contactRun >= TOUCH_ON_SAMPLES) {
+          touched = true
+          contactRun = 0
+          trace('[buildagotchi_ble] touch press\n')
+          server.emitTouch('press')
+        }
       }
-    } else if (touched) {
-      emptyRun++
-      if (emptyRun >= TOUCH_OFF_SAMPLES) {
-        touched = false
-        emptyRun = 0
-        trace('[buildagotchi_ble] touch release\n')
-        server.emitTouch('release')
+    } else {
+      contactRun = 0 // any empty read breaks the run → phantom flapping never presses
+      if (touched) {
+        emptyRun++
+        if (emptyRun >= TOUCH_OFF_SAMPLES) {
+          touched = false
+          emptyRun = 0
+          trace('[buildagotchi_ble] touch release\n')
+          server.emitTouch('release')
+        }
       }
     }
   }

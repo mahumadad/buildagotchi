@@ -218,9 +218,6 @@ export class BridgeServer {
   #sseKeepAlive: NodeJS.Timeout | null = null;
   /** D-17 diagnostics: recent raw Si12T readings + gestures. See handleDeviceInput. */
   #touchSamples: Array<{ ts: number; gesture: string; zones: unknown[] }> = [];
-  #lastHeadTapAt = 0;
-  #lastHeadTapSessionId: string | null = null;
-  #DOUBLE_TAP_WINDOW_MS = 700;
   /**
    * How long after a permission becomes visible on the robot to ignore
    * head-taps. Measured 2026-07-24: showing a permission moves the head
@@ -753,18 +750,16 @@ export class BridgeServer {
 
   #handleGestureAction(action: import('./gesture-recognizer.js').GestureAction): void {
     switch (action.type) {
+      // A single deliberate head touch — short (tap) or firm/long (hold) —
+      // resolves a pending permission. Firm contact is now REQUIRED: raising
+      // TOUCH_ON to 3 in the firmware to kill the phantom-touch chatter means a
+      // real touch is pressed firmly, which the recogniser reads as a hold, not
+      // a quick tap. That same fix removed the reason for the old defences:
+      // the double-tap requirement and the SLEEP-on-hold behaviour both existed
+      // only to tame phantom touches (verified 2026-07-25: 0 phantom presses in
+      // 25s untouched). So both a tap and a hold now approve, with a single
+      // touch — a firm-contact sensor cannot produce a quick double-tap anyway.
       case 'hold':
-        // Long-press-head → SLEEP is disabled on this hardware. Measured
-        // 2026-07-24: the CoreS3 Si12T occasionally sticks in "contact" for
-        // ~16s of idle drift, which the recognizer reads as a hold and put the
-        // robot to SLEEP unprompted — dropping every non-critical event until
-        // someone cycled the mode. The CoreS3 has no button to wake it, so an
-        // accidental sleep is pure loss; deliberate mode changes go through
-        // POST /mode instead. Kept as a no-op so a real hold does nothing
-        // rather than something surprising.
-        this.#opts.logger.info({}, 'head hold ignored (SLEEP-on-hold disabled)');
-        return;
-
       case 'tap': {
         const result = this.#resolveHeadTap();
         if (result.consumed) return;
@@ -933,19 +928,17 @@ export class BridgeServer {
   }
 
   /**
-   * Head tap approval with a double-tap requirement for EVERY permission.
+   * Head tap approval: a single deliberate touch resolves a pending permission.
    *
-   * D6 originally asked for double-tap only on destructive commands. Testing on
-   * hardware 2026-07-24 showed the CoreS3 Si12T fires isolated phantom taps
-   * long after any servo activity — one such phantom was enough to auto-approve
-   * a plain `echo` permission ~94s after it was shown, without the user going
-   * anywhere near the robot. A settle cooldown right after the permission is
-   * shown isn't enough because the phantom can arrive at any time.
-   *
-   * Requiring two taps within DOUBLE_TAP_WINDOW_MS makes phantom approval
-   * effectively impossible (two unrelated noise events would need to align to
-   * <700ms) at the cost of one extra tap for benign commands — the smallest
-   * change that closes the class of "the robot approved itself" incidents.
+   * History: hardware testing 2026-07-24 showed the CoreS3 Si12T fired isolated
+   * phantom taps that auto-approved permissions untouched, so this required a
+   * double-tap (two noise events aligning to <700ms is effectively impossible).
+   * 2026-07-25 fixed the phantoms at the source instead — TOUCH_ON=3 in the
+   * firmware (the noise peaks at 2, a real firm tap at 3), verified 0 phantom
+   * presses in 25s untouched. With the phantoms gone the double-tap is dead
+   * weight, and firm contact reads as a long "hold" that can't be double-tapped
+   * anyway, so a single touch approves. The settle cooldown below stays: it also
+   * gives the user time to read the balloon before a touch counts.
    */
   #resolveHeadTap(): { approved: boolean; consumed: boolean; sessionId?: string } {
     if (!this.#opts.claudeAdapter) return { approved: false, consumed: false };
@@ -964,25 +957,15 @@ export class BridgeServer {
         );
         return { approved: false, consumed: true };
       }
-      const now = Date.now();
-      if (
-        this.#lastHeadTapAt &&
-        this.#lastHeadTapSessionId === sessionId &&
-        now - this.#lastHeadTapAt <= this.#DOUBLE_TAP_WINDOW_MS
-      ) {
-        this.#lastHeadTapAt = 0;
-        this.#lastHeadTapSessionId = null;
-        const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, 'approved');
-        if (eventId) {
-          this.#opts.attentionManager.resolve(eventId, 'approved', 'head');
-          this.#opts.lifeStats?.recordResolution('approved', 'head');
-          focusTerminal(session.cwd, this.#opts.logger);
-          return { approved: true, consumed: true, sessionId };
-        }
+      // A single deliberate touch approves. The double-tap guard existed only
+      // to reject Si12T phantom taps; the firmware's TOUCH_ON=3 eliminated them.
+      const eventId = this.#opts.claudeAdapter.resolvePermission(sessionId, 'approved');
+      if (eventId) {
+        this.#opts.attentionManager.resolve(eventId, 'approved', 'head');
+        this.#opts.lifeStats?.recordResolution('approved', 'head');
+        focusTerminal(session.cwd, this.#opts.logger);
+        return { approved: true, consumed: true, sessionId };
       }
-      // First tap: arm the double-tap guard. Isolated phantom taps stop here.
-      this.#lastHeadTapAt = now;
-      this.#lastHeadTapSessionId = sessionId;
       return { approved: false, consumed: true };
     }
     return { approved: false, consumed: false };
