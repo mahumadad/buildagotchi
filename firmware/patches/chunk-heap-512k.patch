@@ -1,0 +1,13 @@
+diff --git a/firmware/stackchan/manifest.json b/firmware/stackchan/manifest.json
+index 6e0fa5b1..f646b315 100644
+--- a/firmware/stackchan/manifest.json
++++ b/firmware/stackchan/manifest.json
+@@ -153,7 +153,7 @@
+       "creation": {
+         "static": 0,
+         "chunk": {
+-          "initial": 262144,
++          "initial": 524288,
+           "incremental": 0
+         },
+         "heap": {

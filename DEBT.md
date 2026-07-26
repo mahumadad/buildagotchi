@@ -504,6 +504,49 @@ falta una fuente con esos glifos (peso en flash del ESP32). Nota aparte: `rainbo
 capacidad real del firmware (`lightRainbow`) pero **ninguna stateRule lo usa** — solo se
 vio en la demo con una regla temporal.
 
+## D-23 — OOM del heap de XS (RESUELTO 2026-07-26: churn, no leak; heap 256→512KB)
+
+**Firma**: `# Chunk allocation: 456 bytes failed in fixed size heap` → `rst:0xc
+(RTC_SW_CPU_RST)`, ~cada 3 min de uptime. Reabrió el bullet de "resueltas" que daba el
+OOM por cerrado tras la maratón: NO lo estaba.
+
+**Diagnóstico definitivo (instrumentación de Moddable).** Se compiló y flasheó un host
+**instrument** (`mcconfig -i -p esp32:./platforms/m5stackchan_cores3`; el mod release
+carga sobre él, BLE up). El build instrument imprime `instruments: <26 valores>` en
+serial **en texto plano** (sin xsbug GUI ni `xsbug-log`, que no está instalado). Parseando
+la serie temporal: el campo **XS Chunk Heap Used** hace **sawtooth** (sube ~10KB/s y el
+GC lo recupera; 5 caídas grandes en 70s, GC count subiendo) contra el techo **constante
+262144 (256KB)**. Los picos llegan a **261636/262144** — a ~500 bytes del límite. Cuando
+una asignación (los 456 bytes) cae en un pico sin espacio → abort. Por eso es
+**intermitente** (solo revienta si un pico coincide con una asignación que no cabe) y por
+eso parecía pasar "en idle" (el churn base lo genera el render de la cara del host, no el
+mod). **NO es leak de retención** — el GC libera bien. Fuente del churn: render de cara
+(Poser, inherente) + balloon marquee (`unit+unit`+slice por tick, D-24).
+
+**Fix (verificado)**: subir `platforms."esp32/m5stackchan_cores3".creation.chunk.initial`
+de 262144 a **524288 (512KB)** en `stack-chan/firmware/stackchan/manifest.json`. Como el GC
+sí recupera, más margen es el fix real, no un parche que demora: los picos (~262k) quedan
+con ~250KB de aire y nunca tocan el techo. El S3 tiene ~8MB libres. Verificado: soak de
+**400s** con actividad real de balloon/permiso, **cero `rst:0xc`** (antes reventaba a ~198s),
+BLE `connected` sin reconnects. No se re-instrumentó el techo nuevo (build de 15 min por
+confianza marginal). Persistencia: commit local en stack-chan (972f600e, es clon upstream
+ignorado por nuestro git) + patch trackeado `firmware/patches/chunk-heap-512k.patch`.
+
+## D-24 — marquee balloon aloca `unit+unit`+slice cada tick (higiene)
+
+**Dónde**: `firmware/mods/buildagotchi_ble/mod.js:764-772` (`startBalloonMarquee`). El timer
+de scroll hace `const doubled = unit + unit` y `doubled.slice(...)` en CADA tick — para un
+balloon de 209 chars son ~840 bytes asignados por tick, sin parar mientras dure el marquee.
+
+**Por qué no explotó**: con el chunk-heap en 512KB (D-23) el churn extra es inofensivo (el
+GC lo maneja de sobra). Antes contribuía a los picos que chocaban el techo de 256KB.
+
+**Qué lo haría explotar**: nada crítico hoy; es desperdicio en un hot path de un device con
+heap fijo. Bajar el churn da más margen aún y GC más espaciado.
+
+**Costo**: bajo. Precomputar `doubled = unit + unit` una vez en `startBalloonMarquee` (no
+cambia entre ticks) y solo hacer el `slice` por tick. Commit propio, no mezclar con otra cosa.
+
 ---
 
 ## Resueltas en la maratón de estabilidad (2026-07-25)
@@ -513,10 +556,11 @@ vio en la demo con una regla temporal.
   muertos/frame + UART saturado. Deshabilitado el poleo (`Object.defineProperty` porque
   el método del driver es read-only). timeouts 127/30s → 0.
 
-- ~~**Reinicios espontáneos del CoreS3**~~ — eran OOM de la VM XS
-  (`Chunk allocation failed → rst:0xc`), disparados por una tormenta de eventos táctiles
-  + un evento `sample` de diagnóstico cada 150ms. Cerrado: quitado el `sample`,
-  `TOUCH_ON` 1→2, circuit breaker en `emitTouch`.
+- **Reinicios espontáneos del CoreS3** (PARCIAL — reabierto como D-23) — se atacó una
+  causa real (tormenta táctil + evento `sample` cada 150ms): quitado el `sample`,
+  `TOUCH_ON` 1→2 (luego 2→3), circuit breaker en `emitTouch`. Pero 2026-07-25 se capturó
+  la firma OOM (`Chunk allocation 456 bytes → rst:0xc`) reincidiendo a los ~198s en idle
+  puro, sin tormenta táctil. Aquel fix no era la causa completa. Ver **D-23**.
 
 - ~~**Reconexión BLE de minutos**~~ — conexión fantasma del firmware tras un corte sucio
   del Mac (D32). Cerrado: force-disconnect en el safe-mode de heartbeat.
