@@ -1024,6 +1024,48 @@ reframe como permisos, o responder por voz.
 
 ---
 
+## 2026-09-15 — El picker no veía al robot: GAP Device Name cacheado como "Moddable"
+
+### Síntoma
+Tras reiniciar Mac + Claude + robot, el Hardware Buddy de Claude Desktop no listaba
+`Claude-SC3` nunca. El robot anunciaba bien (verificado con scan propio por
+CoreBluetooth/pyobjc: nombre `Claude-SC3` + NUS en paquete primario, RSSI −40), Claude
+tenía permiso de Bluetooth y `hardwareBuddyEnabled` en `true` (estaba en `false` en
+`claude_desktop_config.json`; se corrigió con la app cerrada — abierta lo sobrescribe).
+
+### Causa raíz
+El mod nunca seteaba el **GAP Device Name** (característica 0x2A00): quedaba el default
+del stack (`DEVICE_FRIENDLY_NAME "Moddable"` en `modBLEServer.c`). En el primer connect
+histórico macOS lo leyó y lo **cacheó como `peripheral.name`** — caché de `bluetoothd`
+que sobrevive reinicios de app, de Mac y del robot. El picker filtra por prefijo
+`Claude` → descartaba al robot para siempre. Confirmado conectando por BLE:
+`adv_name='Claude-SC3'` pero `peripheral.name='Moddable'`.
+
+Explica la historia completa: apareció las primeras veces (caché limpio → nombre del
+advertising) y dejó de aparecer tras el primer connect (caché envenenado).
+
+### Fix
+- `mod.js onReady`: `this.deviceName = DEVICE_NAME` antes de `startAdvertising`
+  (setter nativo `xs_ble_server_set_device_name` → `esp_ble_gap_set_device_name`).
+- Corregido el trace mentiroso `advertising as buildagotchi` → interpola `DEVICE_NAME`.
+- Flash del `.xsa` a `0xfa0000` (esptool, hash OK) y boot fresco verificado por serial.
+- Re-conexión por BLE → macOS relee 0x2A00 y refresca el caché:
+  `peripheral.name = 'Claude-SC3'`. **Picker conecta** (verificado 2026-09-15 00:15).
+
+### Herramientas nuevas (tools/)
+- `ble_scan_now.py` — scan BLE 10-20s, lista quién anuncia nombre `Claude*` / NUS.
+  Bisecta "¿el robot anuncia?" sin abrir Claude.
+- `ble_read_gap_name.py` — conecta y muestra `peripheral.name` cacheado vs adv_name.
+  Sirve además para refrescar el caché de macOS tras cambiar el GAP name.
+- Ambas corren con `~/.espressif/python_env/idf6.0_py3.14_env/bin/python` (pyobjc).
+
+### Lección
+En BLE, el nombre existe en TRES lugares: advertising primario, scan-response y GAP
+0x2A00. macOS cachea el tercero y es el que ven las apps vía `peripheral.name`.
+Setear los tres al mismo valor, siempre.
+
+---
+
 ## Pendientes inmediatos
 
 - [x] Push a GitHub (1B + balloon + remount)

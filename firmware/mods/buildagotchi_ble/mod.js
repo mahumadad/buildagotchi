@@ -176,8 +176,15 @@ const DEVICE_NAME = 'Claude-SC3'
 // makes the robot discoverable by Claude Desktop's maker/BLE panel, not just by
 // our own bridge (which matches on the name).
 const NUS_UUID = uuid`6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
-/** Host uart TX/RX characteristic maxBytes (uart.json). */
-const NUS_CHUNK = 64
+/** Target NUS TX chunk. The Bluedroid patch sets local ATT MTU to 517
+ * (modBLECommon.c), and the central exchanges it after connect — but until
+ * that exchange completes the link is at MTU 23 (payload 20). Chunks larger
+ * than mtu-3 make esp_ble_gatts_send_indicate fail SILENTLY: the status ack
+ * never leaves the radio and Claude logs "status timeout" at ~14s. So the
+ * actual chunk is min(NUS_CHUNK, negotiatedMTU - 3); see onMTUExchanged. */
+const NUS_CHUNK = 180
+/** Payload ceiling before the MTU exchange completes (MTU 23 - 3). */
+const NUS_CHUNK_DEFAULT = 20
 /** Same window as default-mods petting (fwd+bwd swipe ⇒ pet). */
 const PET_WINDOW_MS = 800
 /**
@@ -517,22 +524,20 @@ function hybridBalloonLayout(text) {
 }
 
 function startAdvertising(server) {
-  // Advertise the NUS UUID in the primary packet (flags 3B + 128-bit UUID 18B = 21B,
-  // fits 31B) so UUID-filtering scanners — Claude Desktop's Hardware Buddy — discover
-  // the robot. The name goes in the scan response (14B) so our own bridge (noble reads
-  // the localName from the active-scan response) still matches on "buildagotchi".
-  // Both couldn't share one 31B packet, which is why the old code advertised name-only.
+  // M1.3 fix: match the reference firmware layout EXACTLY (ref-buddy-cores3,
+  // NimBLE, verificado visible en el picker de este Mac como Claude-REF):
+  //   NUS UUID in the PRIMARY packet, NAME in the scan response.
+  // The previous layout (name primary / UUID scan-response, public address)
+  // was NOT discovered by Claude's picker — OS-level scans see it, Web
+  // Bluetooth does not. 128-bit UUID (18B) + flags (3B) = 21B fits 31B;
+  // the 9-char name "Claude-SC3" (11B) fits the scan response.
   server.startAdvertising({
-    // Name in the primary packet so every scanner (and the Hardware Buddy picker,
-    // which filters by name) sees "Claude-SC3". The NUS UUID goes in the scan
-    // response — it's only the post-connect transport, not needed for discovery,
-    // and wouldn't fit alongside a 10-char name in the 31-byte primary packet.
     advertisingData: {
       flags: 6,
-      completeName: DEVICE_NAME,
+      completeUUID128List: [NUS_UUID],
     },
     scanResponseData: {
-      completeUUID128List: [NUS_UUID],
+      completeName: DEVICE_NAME,
     },
   })
 }
@@ -566,44 +571,55 @@ class BuildagotchiServer extends BLEServer {
     this.gazeBias = 0
     /** Outbound event lines queued until CCCD notify is enabled. */
     this.pendingOut = []
+    /** Anthropic path: id of the pending Claude permission a head tap approves. */
+    this.buddyPromptId = null
   }
 
   onReady() {
-    // TESTING: wipe any stored bond every boot. A stale bond from a failed pairing
-    // makes a bonded peripheral fall back to directed advertising (only to the old
-    // central) and macOS filter it from the discoverable list — so it "disappears".
-    // Clearing on boot keeps the robot generally discoverable and re-pairable. Once
-    // pairing is solid this should be gated (keep bonds so re-pairing isn't needed).
-    try {
-      SM.deleteAllBondings()
-      trace('[buildagotchi_ble] cleared all bondings\n')
-    } catch (e) {
-      trace(`[buildagotchi_ble] deleteAllBondings error ${e}\n`)
-    }
-    // Claude Desktop's Hardware Buddy requires LE Secure Connections bonding with
+    // NOTE: we intentionally do NOT wipe bonds on boot. An earlier version did
+    // (to recover from a failed-pairing stale bond), but once Just Works pairing
+    // worked it desynced the robot from macOS/Claude on every reflash — the robot
+    // forgot the bond while the host still held it, so the device stopped
+    // re-appearing. Keeping the bond lets a paired host reconnect silently.
+    // Claude Desktop's Hardware Buddy uses LE Secure Connections bonding with
     // a passkey (its reference firmware uses SC + MITM + BOND, DisplayOnly). Declare
     // the same capability so Claude will pair. DisplayOnly = we show a 6-digit
     // passkey (onPasskeyDisplay) and the Mac prompts the user to type it. The NUS
     // characteristics are NOT marked encryption-only (that lives in the host's GATT
     // definition), so our own bridge (noble, no pairing) can still read/write them.
     try {
-      // Just Works pairing: bonded + encrypted, no passkey to display/enter and
-      // no MITM. Simplest flow that still gives Claude the bonded, encrypted link
-      // it wants — and no on-screen passkey to fail on. If Claude turns out to
-      // REQUIRE MITM, switch back to { mitm:true, ioCapability:DisplayOnly } and
-      // fix the on-screen passkey (onPasskeyDisplay below).
+      // Just Works + bonding (encryption, no MITM, NoInputNoOutput). This is the
+      // EXACT config that logged `pair: result=true` (Claude main.log 14:57) on a
+      // fresh user-pick. Claude requires bonding, so bonding:false failed. Bonds
+      // are NEVER wiped now (the old SM.deleteAllBondings-on-boot is what desynced
+      // the robot from macOS/Claude's stored bond and made every reconnect fail). Keep the
+      // bond so a paired host reconnects with matching keys.
+      // FASE 2 (A/B): MITM + DisplayOnly = la config del reference de Anthropic
+      // (SC+MITM+BOND, DisplayOnly). El robot muestra el passkey en el balloon
+      // (onPasskeyDisplay) y macOS pide tipearlo. Si esto empareja, Claude exigía
+      // MITM; si no, el problema es el binding NimBLE (Fase 3).
       this.securityParameters = {
         encryption: true,
-        mitm: false,
+        mitm: true,
         bonding: true,
-        ioCapability: IOCapability.NoInputNoOutput,
+        ioCapability: IOCapability.DisplayOnly,
       }
     } catch (e) {
       trace(`[buildagotchi_ble] securityParameters error ${e}\n`)
     }
+    // GAP Device Name (0x2A00): sin esto queda el default del stack ("Moddable")
+    // y macOS cachea ESE nombre como peripheral.name en el primer connect —
+    // el picker de Claude filtra por prefijo "Claude" y el robot desaparece
+    // para siempre (el caché sobrevive reinicios). Setearlo IGUAL al nombre
+    // anunciado hace que macOS refresque su caché en el próximo connect.
+    try {
+      this.deviceName = DEVICE_NAME
+    } catch (e) {
+      trace(`[buildagotchi_ble] set deviceName error ${e}\n`)
+    }
     startAdvertising(this)
     this.armSafeMode()
-    trace('[buildagotchi_ble] advertising as buildagotchi (secure pairing enabled)\n')
+    trace(`[buildagotchi_ble] advertising as ${DEVICE_NAME} (secure pairing enabled)\n`)
   }
 
   // Passkey Entry pairing (DisplayOnly): show the 6-digit passkey on the robot's
@@ -645,7 +661,23 @@ class BuildagotchiServer extends BLEServer {
     this.armSafeMode()
     // Servo timeout storms can leave one eyelid Contour stale; remount face.
     this.remountFace()
+    // Show the (fixed) pairing PIN on screen so the user can confirm/enter it in
+    // the OS pairing prompt. The passkey is static (123456) in the BLE binding.
+    try {
+      this.applyBalloon(this.robot, 'PIN 123456')
+    } catch (_e) {
+      /* ignore */
+    }
     trace('[buildagotchi_ble] connected\n')
+  }
+
+  onMTUExchanged(mtu) {
+    // M4.1: raise the TX chunk to the negotiated payload ceiling once the
+    // central exchanges MTU (local is 517, see modBLECommon.c). Until this
+    // fires we stay at NUS_CHUNK_DEFAULT so no indicate ever exceeds mtu-3.
+    const next = Math.min(NUS_CHUNK, Math.max(1, mtu - 3))
+    trace(`[buildagotchi_ble] MTU exchanged: ${mtu} → chunk ${next}\n`)
+    this.nusChunk = next
   }
 
   remountFace() {
@@ -669,6 +701,7 @@ class BuildagotchiServer extends BLEServer {
   onDisconnected() {
     this.tx = null
     this.rxBuffer = ''
+    this.nusChunk = null
     startAdvertising(this)
     this.enterSafeMode('disconnect')
     trace('[buildagotchi_ble] disconnected — advertising\n')
@@ -700,6 +733,15 @@ class BuildagotchiServer extends BLEServer {
   }
 
   onRX(data) {
+    // TEMP DIAG (2026-07-30): show every received chunk on screen so we can see if
+    // Claude Desktop's traffic reaches onRX at all over the Bluedroid stack.
+    try {
+      const s = String.fromArrayBuffer(data)
+      this.rxDbg = ((this.rxDbg || 0) + 1)
+      this.applyBalloon(this.robot, `RX${this.rxDbg}: ${s.slice(0, 24)}`)
+    } catch (_e) {
+      /* ignore */
+    }
     this.rxBuffer += String.fromArrayBuffer(data)
     let idx = this.rxBuffer.indexOf('\n')
     while (idx !== -1) {
@@ -718,8 +760,20 @@ class BuildagotchiServer extends BLEServer {
       trace(`[buildagotchi_ble] bad json: ${line}\n`)
       return
     }
-    if (msg == null || typeof msg !== 'object' || typeof msg.t !== 'string') return
+    if (msg == null || typeof msg !== 'object') return
     this.armSafeMode()
+
+    // Anthropic Hardware Buddy protocol (Claude Desktop talks this directly):
+    // commands carry `cmd`, session snapshots carry session fields, and neither
+    // uses our bridge's `t` envelope. Route those away before the `t` switch.
+    if (typeof msg.cmd === 'string') {
+      this.handleBuddyCommand(msg)
+      return
+    }
+    if (typeof msg.t !== 'string') {
+      this.handleBuddySnapshot(msg)
+      return
+    }
 
     switch (msg.t) {
       case 'hello':
@@ -745,6 +799,70 @@ class BuildagotchiServer extends BLEServer {
         break
       default:
         break
+    }
+  }
+
+  // --- Anthropic Hardware Buddy protocol (Claude Desktop) --------------------
+
+  // Send a raw JSON line (no bridge envelope) — the wire format Claude expects.
+  sendRaw(obj) {
+    const line = `${JSON.stringify(obj)}\n`
+    if (this.tx == null) {
+      if (this.pendingOut.length < 16) this.pendingOut.push(line)
+      return
+    }
+    this.writeChunks(line)
+  }
+
+  handleBuddyCommand(msg) {
+    trace(`[buildagotchi_ble] buddy cmd ${msg.cmd}\n`)
+    switch (msg.cmd) {
+      case 'status':
+        this.sendRaw({ ack: 'status', ok: true, data: { name: DEVICE_NAME, sec: true } })
+        break
+      case 'name':
+        this.sendRaw({ ack: 'name', ok: true })
+        break
+      case 'owner':
+        this.sendRaw({ ack: 'owner', ok: true })
+        break
+      case 'unpair':
+        try {
+          SM.deleteAllBondings()
+        } catch (_e) {
+          /* ignore */
+        }
+        this.sendRaw({ ack: 'unpair', ok: true })
+        break
+      default:
+        this.sendRaw({ ack: msg.cmd, ok: true })
+        break
+    }
+  }
+
+  // A desktop session snapshot: reflect Claude's state on the face and remember a
+  // pending permission so a head tap can approve it (see emitTouch).
+  handleBuddySnapshot(snap) {
+    const robot = this.robot
+    const prompt = snap.prompt && typeof snap.prompt === 'object' ? snap.prompt : null
+    this.buddyPromptId = prompt && typeof prompt.id === 'string' ? prompt.id : null
+    try {
+      if (prompt) {
+        robot.setEmotion(EMOTIONS.DOUBTFUL)
+        const tool = typeof prompt.tool === 'string' ? prompt.tool : ''
+        this.applyBalloon(robot, `approve ${tool}`.trim().slice(0, 40))
+      } else if (typeof snap.waiting === 'number' && snap.waiting > 0) {
+        robot.setEmotion(EMOTIONS.DOUBTFUL)
+        this.applyBalloon(robot, typeof snap.msg === 'string' ? snap.msg.slice(0, 40) : '')
+      } else if (typeof snap.running === 'number' && snap.running > 0) {
+        robot.setEmotion(EMOTIONS.HAPPY)
+        this.applyBalloon(robot, '')
+      } else {
+        robot.setEmotion(EMOTIONS.NEUTRAL)
+        this.applyBalloon(robot, '')
+      }
+    } catch (e) {
+      trace(`[buildagotchi_ble] buddy snapshot error ${e}\n`)
     }
   }
 
@@ -1120,8 +1238,9 @@ class BuildagotchiServer extends BLEServer {
   writeChunks(line) {
     if (this.tx == null) return
     try {
-      for (let i = 0; i < line.length; i += NUS_CHUNK) {
-        this.notifyValue(this.tx, ArrayBuffer.fromString(line.slice(i, i + NUS_CHUNK)))
+      const chunk = this.nusChunk || NUS_CHUNK_DEFAULT
+      for (let i = 0; i < line.length; i += chunk) {
+        this.notifyValue(this.tx, ArrayBuffer.fromString(line.slice(i, i + chunk)))
       }
     } catch (e) {
       trace(`[buildagotchi_ble] notify error ${e}\n`)
@@ -1162,6 +1281,19 @@ class BuildagotchiServer extends BLEServer {
       if (this.touchWindowCount === 21) trace('[buildagotchi_ble] touch storm — dropping events\n')
       return
     }
+    // Anthropic path: when Claude has a pending permission, a head tap approves it.
+    if (gesture === 'press' && this.buddyPromptId) {
+      this.sendRaw({ cmd: 'permission', id: this.buddyPromptId, decision: 'once' })
+      trace(`[buildagotchi_ble] buddy permission once ${this.buddyPromptId}\n`)
+      this.buddyPromptId = null
+      try {
+        this.applyBalloon(this.robot, '')
+      } catch (_e) {
+        /* ignore */
+      }
+      return
+    }
+    // Bridge path: forward the raw touch to our own server.
     this.send('event', { kind: 'touch', detail: { gesture } })
   }
 
